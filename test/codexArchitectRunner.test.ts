@@ -78,6 +78,13 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("Do not write THREE.* TypeScript type annotations");
     expect(codex.thread.prompt).toContain("procedural DataTexture");
     expect(codex.thread.prompt).toContain("Do not use CanvasTexture");
+    expect(codex.thread.prompt).toContain("pure helper functions");
+    expect(codex.thread.prompt).toContain("helper functions called by buildRoom");
+    expect(codex.thread.prompt).toContain("maximize visual quality");
+    expect(codex.thread.prompt).toContain("does not mean simple, sparse, flat, boxy");
+    expect(codex.thread.prompt).toContain("procedural texture detail");
+    expect(codex.thread.prompt).toContain("avoid blocky or cartoonish");
+    expect(codex.thread.prompt).toContain("recognizable object anatomy");
     expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
     expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
     expect(codex.thread.prompt).toContain("For targeted requests");
