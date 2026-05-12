@@ -84,3 +84,6 @@ Key environment variables:
 - `ROOMSCAPE_DATA_DIR=/data`
 - `ROOMSCAPE_CHATGPT_LOGIN_FLOW=device_code`
 - `ROOMSCAPE_CODEX_AUTH_DIR=/data/codex-auth`
+- `ROOMSCAPE_CODEX_SANDBOX_MODE=danger-full-access`
+
+Railway containers currently block Codex's Linux bubblewrap sandbox with `bwrap: Failed to make / slave: Permission denied`. Roomscape therefore uses Codex `danger-full-access` on Railway, keeps network access disabled, and still rejects generated file changes outside the active room plus invalid scene source before promoting updates.

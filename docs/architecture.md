@@ -14,7 +14,7 @@ This mirrors the Codex integration guidance: keep the trusted host as the contro
 
 ## Agent Runner
 
-`CodexSdkArchitectRunner` is the live runner. It uses `@openai/codex-sdk` server-side, starts a Codex thread with `sandbox/rooms/active` as the working directory, passes `workspace-write` sandboxing, disables network access, and does not provide additional writable directories.
+`CodexSdkArchitectRunner` is the live runner. It uses `@openai/codex-sdk` server-side, starts a Codex thread with `sandbox/rooms/active` as the working directory, disables network access, and does not provide additional writable directories. Local development uses Codex `workspace-write` sandboxing. Railway containers do not allow Codex's bubblewrap sandbox, so production defaults to `danger-full-access` while Roomscape still validates streamed file-change paths and generated scene source before promotion.
 
 The deterministic runner remains available as a test double for fast UI and policy tests.
 

@@ -117,7 +117,7 @@ async function startChatGptAuth() {
       chatGptAuthWindow.location.href = login.verificationUrl;
       errorTarget.textContent = `Enter code ${login.userCode} on the OpenAI page. If ChatGPT asks, enable Codex device code authorization in ChatGPT Security Settings, then retry sign-in.`;
       errorTarget.hidden = false;
-      button.textContent = login.userCode;
+      button.textContent = "Waiting for ChatGPT...";
     } else {
       chatGptAuthWindow.location.href = login.authUrl;
       button.textContent = "Waiting for ChatGPT...";

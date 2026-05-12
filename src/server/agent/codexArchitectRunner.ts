@@ -57,7 +57,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         model: input.model,
         workingDirectory: this.roomCode.sandboxRoot,
         skipGitRepoCheck: true,
-        sandboxMode: "workspace-write",
+        sandboxMode: codexSandboxMode(process.env),
         approvalPolicy: "never",
         networkAccessEnabled: false,
       });
@@ -122,6 +122,9 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
       }
       throwIfAborted(input.signal);
       const validationErrors = this.roomCode.validateSceneSource(normalizedSource);
+      if (normalizedSource === originalScene) {
+        validationErrors.push("Codex did not change roomScene.ts.");
+      }
       if (targetedValidationPrompt) {
         validationErrors.push(...validateTargetedEditScope(targetedValidationPrompt, originalScene, normalizedSource));
       }
@@ -201,6 +204,14 @@ function codexEnvironment(codexHome: string): Record<string, string> {
   return Object.fromEntries(
     Object.entries({ ...process.env, CODEX_HOME: codexHome }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
+}
+
+export function codexSandboxMode(env: NodeJS.ProcessEnv): NonNullable<ThreadOptions["sandboxMode"]> {
+  const configured = env.ROOMSCAPE_CODEX_SANDBOX_MODE?.trim();
+  if (configured === "read-only" || configured === "workspace-write" || configured === "danger-full-access") {
+    return configured;
+  }
+  return env.RAILWAY_ENVIRONMENT || env.RAILWAY_SERVICE_ID ? "danger-full-access" : "workspace-write";
 }
 
 function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): string {

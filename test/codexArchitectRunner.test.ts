@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
-import { CodexSdkArchitectRunner } from "../src/server/agent/codexArchitectRunner";
+import { CodexSdkArchitectRunner, codexSandboxMode } from "../src/server/agent/codexArchitectRunner";
 import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import type { AgentEvent } from "../src/shared/api";
 import { emptyRoomConfig } from "../src/shared/room";
@@ -108,6 +108,27 @@ describe("Codex SDK architect runner", () => {
     expect(events.some((event) => event.type === "scene-updated")).toBe(true);
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("green table scene");
     expect(events.at(-1)).toMatchObject({ type: "complete" });
+  });
+
+  it("uses full access on Railway because bubblewrap sandboxing is unavailable there", () => {
+    expect(codexSandboxMode({ RAILWAY_ENVIRONMENT: "production" })).toBe("danger-full-access");
+    expect(codexSandboxMode({ ROOMSCAPE_CODEX_SANDBOX_MODE: "workspace-write", RAILWAY_ENVIRONMENT: "production" })).toBe("workspace-write");
+    expect(codexSandboxMode({})).toBe("workspace-write");
+  });
+
+  it("does not report success when Codex fails before changing the scene", async () => {
+    const root = await mkRoomRoot();
+    const original = await readFile(path.join(root, "roomScene.ts"), "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), original, "utf8");
+    const codex = new FakeCodex([completed()]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex, maxRepairAttempts: 0 });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Add a tree", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(events.some((event) => event.type === "scene-updated")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "error" });
+    expect(events.find((event) => event.type === "error")?.message).toContain("Codex did not change roomScene.ts");
   });
 
   it("does not promote invalid generated scene code", async () => {
