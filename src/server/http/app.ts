@@ -24,14 +24,19 @@ interface AppDeps {
   staticRoot?: string;
 }
 
+interface UserRunState {
+  generation: number;
+  queue: Promise<void>;
+  controllers: Set<AbortController>;
+  runIds: Set<string>;
+}
+
 export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
   const activeRooms = new ActiveRoomRepository(store);
-  let runQueue: Promise<void> = Promise.resolve();
-  let runGeneration = 0;
-  const activeRunControllers = new Set<AbortController>();
-  const knownRunIds = new Set<string>();
+  const runStates = new Map<string, UserRunState>();
+  const runOwners = new Map<string, string>();
 
   /** Handles API routes first, then delegates static and HMR traffic to Vite in development. */
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -71,8 +76,10 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
-      cancelAllRuns("Signed out; cleared active room edits.");
-      await auth.logout(readCookie(req, "roomscape_session"));
+      const sessionId = readCookie(req, "roomscape_session");
+      const user = await auth.userForSession(sessionId);
+      if (user) cancelUserRuns(user.id, "Signed out; cleared active room edits.");
+      await auth.logout(sessionId);
       clearSessionCookie(res);
       sendJson(res, 200, { ok: true });
       return;
@@ -160,7 +167,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
-      cancelAllRuns("Room reset; cleared active room edits.");
+      cancelUserRuns(user.id, "Room reset; cleared active room edits.");
       const activeConfig = await activeRooms.saveConfig(user.id, freshRoomConfig());
       const code = requireRoomCode(roomCode);
       await code.writeConfig(activeConfig);
@@ -170,18 +177,20 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     }
     if (req.method === "POST" && url.pathname === "/api/agent/runs") {
       const body = await readJson<{ prompt: string; model: string; currentConfig?: RoomConfig }>(req);
+      const runState = userRunState(user.id);
       const runId = randomUUID();
-      const runVersion = runGeneration;
+      const runVersion = runState.generation;
       const controller = new AbortController();
       const activeConfig = await activeRooms.getConfig(user.id);
       const currentConfig = body.currentConfig ?? activeConfig;
-      activeRunControllers.add(controller);
-      knownRunIds.add(runId);
+      runState.controllers.add(controller);
+      runState.runIds.add(runId);
+      runOwners.set(runId, user.id);
       bus.publish(runId, { type: "log", message: "Queued room edit.", at: new Date().toISOString() });
-      runQueue = runQueue
+      runState.queue = runState.queue
         .catch(() => undefined)
         .then(async () => {
-          if (runVersion !== runGeneration || controller.signal.aborted) return;
+          if (runVersion !== runState.generation || controller.signal.aborted) return;
           bus.publish(runId, { type: "log", message: "Starting queued room edit.", at: new Date().toISOString() });
           await runner.run(
             {
@@ -192,26 +201,28 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
               signal: controller.signal,
             },
             (event) => {
-              if (runVersion !== runGeneration || controller.signal.aborted) return;
+              if (runVersion !== runState.generation || controller.signal.aborted) return;
               if (event.type === "room-updated") void activeRooms.saveConfig(user.id, event.config);
               bus.publish(runId, event);
             },
           );
         })
         .finally(() => {
-          activeRunControllers.delete(controller);
-          knownRunIds.delete(runId);
+          runState.controllers.delete(controller);
+          runState.runIds.delete(runId);
+          runOwners.delete(runId);
         });
       sendJson(res, 202, { runId });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/agent/runs/cancel") {
-      cancelAllRuns("Room edit cancelled.");
+      cancelUserRuns(user.id, "Room edit cancelled.");
       sendJson(res, 200, { ok: true });
       return;
     }
     const eventMatch = url.pathname.match(/^\/api\/agent\/runs\/([^/]+)\/events$/);
     if (req.method === "GET" && eventMatch?.[1]) {
+      if (runOwners.get(eventMatch[1]) !== user.id) throw new HttpError(404, "Run not found.");
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -228,16 +239,30 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     throw new HttpError(404, `No route for ${req.method} ${url.pathname}`);
   }
 
-  function cancelAllRuns(reason: string): void {
-    runGeneration += 1;
-    for (const controller of activeRunControllers) controller.abort();
-    activeRunControllers.clear();
-    for (const runId of knownRunIds) {
+  function userRunState(userId: string): UserRunState {
+    const existing = runStates.get(userId);
+    if (existing) return existing;
+    const created: UserRunState = {
+      generation: 0,
+      queue: Promise.resolve(),
+      controllers: new Set<AbortController>(),
+      runIds: new Set<string>(),
+    };
+    runStates.set(userId, created);
+    return created;
+  }
+
+  function cancelUserRuns(userId: string, reason: string): void {
+    const runState = userRunState(userId);
+    runState.generation += 1;
+    for (const controller of runState.controllers) controller.abort();
+    runState.controllers.clear();
+    for (const runId of runState.runIds) {
       bus.publish(runId, { type: "error", message: reason, at: new Date().toISOString() });
+      runOwners.delete(runId);
     }
-    knownRunIds.clear();
-    bus.clear();
-    runQueue = Promise.resolve();
+    runState.runIds.clear();
+    runState.queue = Promise.resolve();
   }
 }
 

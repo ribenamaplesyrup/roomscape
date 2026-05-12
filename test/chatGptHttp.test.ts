@@ -207,6 +207,33 @@ describe("ChatGPT auth HTTP flow", () => {
     await request<{ ok: boolean }>(handler, "POST", "/api/auth/logout", undefined, sessionCookie);
     expect(runner.lastSignal?.aborted).toBe(true);
   });
+
+  it("does not let one user cancel another user's active room edit", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-run-owners-"));
+    const runner = new HangingRunner();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+
+    codex.account = { accountId: "acct-a", email: "a@example.com" };
+    const userA = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const userACookie = userA.headers["set-cookie"];
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, userACookie);
+    await runner.waitForStart();
+
+    codex.account = { accountId: "acct-b", email: "b@example.com" };
+    const userB = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    await request<{ ok: boolean }>(handler, "POST", "/api/agent/runs/cancel", undefined, userB.headers["set-cookie"]);
+    expect(runner.lastSignal?.aborted).toBe(false);
+
+    await request<{ ok: boolean }>(handler, "POST", "/api/agent/runs/cancel", undefined, userACookie);
+    expect(runner.lastSignal?.aborted).toBe(true);
+  });
 });
 
 class HangingRunner implements ArchitectRunner {
