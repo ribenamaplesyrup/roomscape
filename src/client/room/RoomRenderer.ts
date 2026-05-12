@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { RoomConfig, RoomObject } from "../../shared/room";
+import type { RoomConfig, RoomObject, SurfaceMaterial, SurfaceTexture } from "../../shared/room";
+import type { RoomSceneModule } from "./sceneTypes";
 
 export interface CameraPose {
   position: [number, number, number];
@@ -9,43 +10,68 @@ export interface CameraPose {
 export class RoomRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
-  private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
+  private readonly renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "low-power" });
   private readonly keys = new Set<string>();
   private readonly dynamicObjects = new THREE.Group();
+  private readonly onResize = () => this.resize();
+  private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
+  private readonly onKeyUp = (event: KeyboardEvent) => this.handleKeyUp(event);
+  private readonly onMouseMove = (event: MouseEvent) => this.handleMouseMove(event);
   private yaw = 0;
   private pitch = 0;
   private frame = 0;
+  private renderRequested = false;
+  private running = false;
 
   public constructor(private readonly mount: HTMLElement) {
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
     this.mount.append(this.renderer.domElement);
     this.camera.position.set(0, 1.65, 4.5);
     this.scene.add(this.dynamicObjects);
     this.bindInput();
     this.resize();
-    window.addEventListener("resize", () => this.resize());
+    window.addEventListener("resize", this.onResize);
   }
 
   /** Applies a new generated room config without replacing the camera or controls. */
   public applyConfig(config: RoomConfig): void {
     this.scene.background = new THREE.Color(config.palette.ceiling);
-    this.dynamicObjects.clear();
+    this.scene.fog = config.objects.length > 0 ? new THREE.Fog(config.palette.ceiling, 9, 20) : null;
+    disposeObject3D(this.dynamicObjects);
     this.buildShell(config);
     for (const object of config.objects) {
       const mesh = meshForObject(object);
       if (mesh) this.dynamicObjects.add(mesh);
     }
+    this.requestRender();
   }
 
-  /** Starts the render loop and first-person movement updates. */
+  /** Applies sandbox-authored Three.js scene code without replacing camera or controls. */
+  public applyScene(module: RoomSceneModule): void {
+    disposeObject3D(this.dynamicObjects);
+    module.buildRoom({ THREE, root: this.dynamicObjects, scene: this.scene });
+    this.requestRender();
+  }
+
+  /** Starts the demand-driven render loop and first-person movement updates. */
   public start(): void {
-    const loop = () => {
-      this.frame = requestAnimationFrame(loop);
+    if (this.running) return;
+    this.running = true;
+    this.requestRender();
+  }
+
+  private requestRender(): void {
+    if (this.renderRequested || !this.running) return;
+    this.renderRequested = true;
+    this.frame = requestAnimationFrame(() => {
+      this.renderRequested = false;
       this.moveCamera();
       this.renderer.render(this.scene, this.camera);
-    };
-    loop();
+      if (this.hasMovementInput()) this.requestRender();
+    });
   }
 
   /** Captures the current pose so hot updates can preserve user immersion. */
@@ -62,31 +88,38 @@ export class RoomRenderer {
     this.pitch = pose.rotation[0];
     this.yaw = pose.rotation[1];
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    this.requestRender();
   }
 
   public dispose(): void {
+    this.running = false;
     cancelAnimationFrame(this.frame);
+    document.removeEventListener("keydown", this.onKeyDown);
+    document.removeEventListener("keyup", this.onKeyUp);
+    document.removeEventListener("mousemove", this.onMouseMove);
+    window.removeEventListener("resize", this.onResize);
+    disposeObject3D(this.dynamicObjects);
+    this.mount.replaceChildren();
     this.renderer.dispose();
   }
 
   private buildShell(config: RoomConfig): void {
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 10),
-      new THREE.MeshStandardMaterial({ color: config.palette.floor, roughness: 0.75 }),
+      surfaceMaterial(config.palette.floor, config.materials?.floor),
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
     this.dynamicObjects.add(floor);
 
     const ceiling = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 10),
-      new THREE.MeshStandardMaterial({ color: config.palette.ceiling, roughness: 0.9 }),
+      surfaceMaterial(config.palette.ceiling, config.materials?.ceiling),
     );
     ceiling.position.y = 3;
     ceiling.rotation.x = Math.PI / 2;
     this.dynamicObjects.add(ceiling);
 
-    const wallMaterial = new THREE.MeshStandardMaterial({ color: config.palette.wall, roughness: 0.82 });
+    const wallMaterial = surfaceMaterial(config.palette.wall, config.materials?.wall);
     const wallGeometry = new THREE.PlaneGeometry(10, 3);
     const walls: Array<[number, number, number, number]> = [
       [0, 1.5, -5, 0],
@@ -101,34 +134,64 @@ export class RoomRenderer {
       this.dynamicObjects.add(wall);
     }
 
-    const light = new THREE.HemisphereLight("#fff8ec", "#3d4643", 1.7);
+    if (config.objects.length > 0) {
+      const trimMaterial = new THREE.MeshStandardMaterial({ color: config.palette.accent, roughness: 0.74 });
+      const trimGeometry = new THREE.BoxGeometry(10, 0.08, 0.08);
+      const backTrim = new THREE.Mesh(trimGeometry, trimMaterial);
+      backTrim.position.set(0, 0.08, -4.96);
+      const frontTrim = backTrim.clone();
+      frontTrim.position.z = 4.96;
+      const sideTrimGeometry = new THREE.BoxGeometry(0.08, 0.08, 10);
+      const leftTrim = new THREE.Mesh(sideTrimGeometry, trimMaterial);
+      leftTrim.position.set(-4.96, 0.08, 0);
+      const rightTrim = leftTrim.clone();
+      rightTrim.position.x = 4.96;
+      this.dynamicObjects.add(backTrim, frontTrim, leftTrim, rightTrim);
+    }
+
+    const light = new THREE.HemisphereLight("#ffffff", "#555555", config.objects.length === 0 ? 1.2 : 1.7);
     this.dynamicObjects.add(light);
-    const directional = new THREE.DirectionalLight("#ffffff", 1.4);
+    const directional = new THREE.DirectionalLight("#ffffff", config.objects.length === 0 ? 0.6 : 1.4);
     directional.position.set(2, 4, 3);
-    directional.castShadow = true;
     this.dynamicObjects.add(directional);
   }
 
   private bindInput(): void {
     this.renderer.domElement.addEventListener("click", () => this.renderer.domElement.requestPointerLock());
-    document.addEventListener("keydown", (event) => this.keys.add(event.key.toLowerCase()));
-    document.addEventListener("keyup", (event) => this.keys.delete(event.key.toLowerCase()));
-    document.addEventListener("mousemove", (event) => {
-      if (document.pointerLockElement !== this.renderer.domElement) return;
-      this.yaw -= event.movementX * 0.0024;
-      this.pitch = THREE.MathUtils.clamp(this.pitch - event.movementY * 0.0024, -1.2, 1.2);
-      this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
-    });
+    document.addEventListener("keydown", this.onKeyDown);
+    document.addEventListener("keyup", this.onKeyUp);
+    document.addEventListener("mousemove", this.onMouseMove);
+  }
+
+  private handleKeyDown(event: KeyboardEvent): void {
+    if (isMovementKey(event.key)) {
+      event.preventDefault();
+      this.keys.add(event.key);
+      this.requestRender();
+    }
+  }
+
+  private handleKeyUp(event: KeyboardEvent): void {
+    if (isMovementKey(event.key)) event.preventDefault();
+    this.keys.delete(event.key);
+  }
+
+  private handleMouseMove(event: MouseEvent): void {
+    if (document.pointerLockElement !== this.renderer.domElement) return;
+    this.yaw -= event.movementX * 0.0024;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - event.movementY * 0.0024, -1.2, 1.2);
+    this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    this.requestRender();
   }
 
   private moveCamera(): void {
     const direction = new THREE.Vector3();
-    const forward = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw) * -1);
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, Math.sin(this.yaw));
-    if (this.keys.has("w")) direction.add(forward);
-    if (this.keys.has("s")) direction.sub(forward);
-    if (this.keys.has("d")) direction.add(right);
-    if (this.keys.has("a")) direction.sub(right);
+    const forward = horizontalCameraForward(this.camera);
+    const right = new THREE.Vector3().crossVectors(forward, this.camera.up).normalize();
+    if (this.keys.has("ArrowUp")) direction.add(forward);
+    if (this.keys.has("ArrowDown")) direction.sub(forward);
+    if (this.keys.has("ArrowRight")) direction.add(right);
+    if (this.keys.has("ArrowLeft")) direction.sub(right);
     if (direction.lengthSq() > 0) {
       direction.normalize().multiplyScalar(0.055);
       this.camera.position.add(direction);
@@ -143,31 +206,200 @@ export class RoomRenderer {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.requestRender();
+  }
+
+  private hasMovementInput(): boolean {
+    return this.keys.has("ArrowUp") || this.keys.has("ArrowDown") || this.keys.has("ArrowRight") || this.keys.has("ArrowLeft");
   }
 }
 
 function meshForObject(object: RoomObject): THREE.Object3D | null {
   if (!isVector3(object.position) || !isVector3(object.scale)) return null;
-  const material = new THREE.MeshStandardMaterial({ color: object.color, roughness: 0.58, metalness: object.kind === "light" ? 0.15 : 0 });
-  const geometry = object.kind === "light" ? new THREE.SphereGeometry(0.4, 32, 16) : new THREE.BoxGeometry(1, 1, 1);
-  const mesh = new THREE.Mesh(geometry, material);
+  if (object.kind === "table") return tableForObject(object);
+  if (object.kind === "sofa") return sofaForObject(object);
+  if (object.kind === "column") return columnForObject(object);
+  if (object.kind === "light") return lightForObject(object);
+  return boxForObject(object, texturedMaterial(object.color, "object", 0.62));
+}
+
+function boxForObject(object: RoomObject, material: THREE.Material): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
   mesh.position.fromArray(object.position);
   mesh.scale.fromArray(object.scale);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  if (object.kind === "light") {
-    const group = new THREE.Group();
-    const light = new THREE.PointLight(object.color, object.intensity ?? 0.85, 5);
-    light.position.copy(mesh.position);
-    mesh.position.set(0, 0, 0);
-    group.position.copy(light.position);
-    light.position.set(0, 0, 0);
-    group.add(light, mesh);
-    return group;
-  }
   return mesh;
+}
+
+function tableForObject(object: RoomObject): THREE.Object3D {
+  const [sx, sy, sz] = object.scale;
+  const group = new THREE.Group();
+  group.position.fromArray(object.position);
+  const material = texturedMaterial(object.color, "wood", 0.68);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(sx, Math.max(0.08, sy * 0.18), sz), material);
+  top.position.y = sy * 0.42;
+  group.add(top);
+  const legMaterial = new THREE.MeshStandardMaterial({ color: darken(object.color, 0.72), roughness: 0.72 });
+  const legHeight = Math.max(0.28, sy * 0.78);
+  const legGeometry = new THREE.BoxGeometry(0.08, legHeight, 0.08);
+  for (const x of [-sx * 0.42, sx * 0.42]) {
+    for (const z of [-sz * 0.38, sz * 0.38]) {
+      const leg = new THREE.Mesh(legGeometry, legMaterial);
+      leg.position.set(x, -legHeight * 0.08, z);
+      group.add(leg);
+    }
+  }
+  return group;
+}
+
+function sofaForObject(object: RoomObject): THREE.Object3D {
+  const [sx, sy, sz] = object.scale;
+  const group = new THREE.Group();
+  group.position.fromArray(object.position);
+  const material = texturedMaterial(object.color, "fabric", 0.94);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(sx, sy * 0.45, sz), material);
+  base.position.y = -sy * 0.15;
+  const back = new THREE.Mesh(new THREE.BoxGeometry(sx, sy * 0.9, Math.max(0.12, sz * 0.18)), material);
+  back.position.set(0, sy * 0.1, -sz * 0.42);
+  const armGeometry = new THREE.BoxGeometry(Math.max(0.12, sx * 0.1), sy * 0.65, sz);
+  const leftArm = new THREE.Mesh(armGeometry, material);
+  leftArm.position.set(-sx * 0.48, -sy * 0.02, 0);
+  const rightArm = leftArm.clone();
+  rightArm.position.x = sx * 0.48;
+  group.add(base, back, leftArm, rightArm);
+  return group;
+}
+
+function columnForObject(object: RoomObject): THREE.Object3D {
+  const [sx, sy, sz] = object.scale;
+  const radius = Math.max(0.08, Math.max(sx, sz) * 0.5);
+  const geometry = new THREE.CylinderGeometry(radius, radius, sy, 24);
+  const mesh = new THREE.Mesh(geometry, texturedMaterial(object.color, "plaster", 0.8));
+  mesh.position.fromArray(object.position);
+  return mesh;
+}
+
+function lightForObject(object: RoomObject): THREE.Object3D {
+  const group = new THREE.Group();
+  group.position.fromArray(object.position);
+  const [sx, sy, sz] = object.scale;
+  const material = new THREE.MeshStandardMaterial({
+    color: object.color,
+    emissive: object.color,
+    emissiveIntensity: 0.85,
+    roughness: 0.36,
+  });
+  const fixture = new THREE.Mesh(new THREE.BoxGeometry(sx, Math.max(0.04, sy), sz), material);
+  const light = new THREE.PointLight(object.color, object.intensity ?? 0.9, 6);
+  group.add(fixture, light);
+  return group;
 }
 
 function isVector3(value: unknown): value is [number, number, number] {
   return Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === "number");
+}
+
+function horizontalCameraForward(camera: THREE.Camera): THREE.Vector3 {
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  if (forward.lengthSq() === 0) return new THREE.Vector3(0, 0, -1);
+  return forward.normalize();
+}
+
+function isMovementKey(key: string): boolean {
+  return key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
+}
+
+function plainMaterial(color: string): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 });
+}
+
+function surfaceMaterial(fallbackColor: string, material: SurfaceMaterial | undefined): THREE.MeshStandardMaterial {
+  if (!material || material.texture === "plain") return plainMaterial(material?.color ?? fallbackColor);
+  const color = material.color ?? fallbackColor;
+  const textureKind = material.texture;
+  const map = proceduralTexture(color, textureKind);
+  const bumpMap = proceduralTexture(color, textureKind);
+  return new THREE.MeshStandardMaterial({
+    color,
+    map,
+    bumpMap,
+    bumpScale: textureKind === "carpet" ? 0.045 : 0.018,
+    roughness: textureKind === "carpet" ? 0.98 : 0.88,
+    metalness: 0,
+  });
+}
+
+function texturedMaterial(color: string, kind: TextureKind, roughness: number): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color,
+    map: proceduralTexture(color, kind),
+    roughness,
+    metalness: 0,
+  });
+}
+
+type TextureKind = SurfaceTexture | "floor" | "ceiling" | "wall" | "object" | "fabric";
+
+function proceduralTexture(color: string, kind: TextureKind): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = color;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const seed = kind.charCodeAt(0) * 19 + color.length * 7;
+  const marks = kind === "carpet" ? 560 : 180;
+  for (let i = 0; i < marks; i += 1) {
+    const x = (i * 37 + seed) % canvas.width;
+    const y = (i * 53 + seed * 2) % canvas.height;
+    const alpha = kind === "carpet" ? 0.16 : kind === "fabric" ? 0.12 : 0.075;
+    context.fillStyle = i % 2 === 0 ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
+    if (kind === "carpet") {
+      context.fillRect(x, y, 1 + (i % 3), 1);
+    } else {
+      context.fillRect(x, y, kind === "wood" ? 18 : 2, kind === "fabric" ? 1 : 2);
+    }
+  }
+  if (kind === "floor" || kind === "ceiling" || kind === "tile") {
+    context.strokeStyle = "rgba(0,0,0,0.08)";
+    context.lineWidth = 1;
+    for (let line = 32; line < 128; line += 32) {
+      context.beginPath();
+      context.moveTo(line, 0);
+      context.lineTo(line, 128);
+      context.moveTo(0, line);
+      context.lineTo(128, line);
+      context.stroke();
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(kind === "wall" ? 2 : kind === "carpet" ? 12 : 4, kind === "wall" ? 1 : kind === "carpet" ? 12 : 4);
+  return texture;
+}
+
+function darken(color: string, amount: number): string {
+  const source = new THREE.Color(color);
+  source.multiplyScalar(amount);
+  return `#${source.getHexString()}`;
+}
+
+function disposeObject3D(object: THREE.Object3D): void {
+  for (const child of [...object.children]) {
+    disposeObject3D(child);
+    object.remove(child);
+  }
+  if (object instanceof THREE.Mesh) {
+    object.geometry.dispose();
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) value.dispose();
+      }
+      material.dispose();
+    }
+  }
 }

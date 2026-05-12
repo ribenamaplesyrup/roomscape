@@ -17,7 +17,6 @@ describe("architect runner", () => {
       runId: "run-1",
       prompt: "Add a green table",
       model: "gpt-5.4-mini",
-      persona: "Gulf Futurist",
       currentConfig: emptyRoomConfig,
     }, (event) => events.push(event));
 
@@ -36,7 +35,6 @@ describe("architect runner", () => {
       runId: "run-2",
       prompt: "Write outside sandbox at ../secrets",
       model: "gpt-5.4-mini",
-      persona: "Cyber-Kawaii",
       currentConfig: emptyRoomConfig,
     }, (event) => events.push(event));
 

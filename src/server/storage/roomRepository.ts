@@ -13,7 +13,7 @@ export class RoomRepository {
   }
 
   /** Saves a room snapshot for the user who owns the current session. */
-  public async save(userId: string, name: string, config: RoomConfig): Promise<SavedRoom> {
+  public async save(userId: string, name: string, config: RoomConfig, sceneSource: string): Promise<SavedRoom> {
     const data = await this.store.read();
     const now = new Date().toISOString();
     const room: RoomRecord = {
@@ -21,6 +21,7 @@ export class RoomRepository {
       userId,
       name: name.trim() || config.name || "Untitled room",
       config: { ...config, updatedAt: now },
+      sceneSource,
       createdAt: now,
       updatedAt: now,
     };

@@ -1,0 +1,15 @@
+{
+  "name": "Roomscape",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "roomscape",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [8788, 18788],
+  "postCreateCommand": "npm ci",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}

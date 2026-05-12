@@ -2,11 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import type { PublicUser } from "../../shared/api";
 import type { DataStore, UserRecord } from "../storage/types";
 
-export interface ArchitectProfileInput {
-  architectName: string;
-  architectDescription: string;
-}
-
 export interface ChatGptAuthInput {
   accountId: string;
   email?: string;
@@ -39,8 +34,6 @@ export class AuthService {
         openAiAccountHash,
         openAiAccountLabel: labelChatGptAccount(input.email, input.planType),
         ...(input.planType ? { planType: input.planType } : {}),
-        architectName: "",
-        architectDescription: "",
         createdAt: now,
         updatedAt: now,
       };
@@ -50,33 +43,6 @@ export class AuthService {
     data.sessions.push(session);
     await this.store.write(data);
     return { user: toPublicUser(user), sessionId: session.id };
-  }
-
-  /** Stores the user's Architect persona after OpenAI authentication succeeds. */
-  public async updateArchitectProfile(sessionId: string | undefined, input: ArchitectProfileInput): Promise<PublicUser> {
-    if (!sessionId) {
-      throw new Error("Authentication required.");
-    }
-    const architectName = input.architectName.trim();
-    const architectDescription = input.architectDescription.trim();
-    if (!architectName) {
-      throw new Error("Architect name is required.");
-    }
-    if (!architectDescription) {
-      throw new Error("Architect description is required.");
-    }
-
-    const data = await this.store.read();
-    const session = data.sessions.find((candidate) => candidate.id === sessionId);
-    const user = session ? data.users.find((candidate) => candidate.id === session.userId) : undefined;
-    if (!user) {
-      throw new Error("Authentication required.");
-    }
-    user.architectName = architectName;
-    user.architectDescription = architectDescription;
-    user.updatedAt = new Date().toISOString();
-    await this.store.write(data);
-    return toPublicUser(user);
   }
 
   /** Resolves a session token into a public user profile. */
@@ -98,16 +64,11 @@ export class AuthService {
 }
 
 export function toPublicUser(user: UserRecord): PublicUser {
-  const architectName = user.architectName ?? "";
-  const architectDescription = user.architectDescription ?? "";
   return {
     id: user.id,
     authMode: user.authMode ?? "chatgpt",
     openAiAccountLabel: user.openAiAccountLabel ?? "OpenAI account",
     ...(user.planType ? { planType: user.planType } : {}),
-    architectName,
-    architectDescription,
-    isArchitectConfigured: Boolean(architectName && architectDescription),
   };
 }
 

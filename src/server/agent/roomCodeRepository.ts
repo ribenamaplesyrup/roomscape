@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { RoomConfig, RoomObject, RoomObjectKind } from "../../shared/room";
+import ts from "typescript";
+import type { RoomConfig, RoomObject, RoomObjectKind, SurfaceMaterial, SurfaceTexture } from "../../shared/room";
 import { evaluateSandboxPath } from "./sandboxPolicy";
 
 export class SandboxViolationError extends Error {
@@ -13,6 +14,8 @@ export class RoomCodeRepository {
   public constructor(
     public readonly sandboxRoot: string,
     private readonly configFile = "roomConfig.ts",
+    private readonly sceneFile = "roomScene.ts",
+    private readonly activeSceneFile = "activeRoomScene.ts",
   ) {}
 
   /** Writes the active room config as TypeScript so Vite can hot-reload the scene module. */
@@ -29,6 +32,81 @@ export class RoomCodeRepository {
       "",
     ].join("\n");
     await writeFile(decision.normalizedPath, body, "utf8");
+    return decision.normalizedPath;
+  }
+
+  /** Writes the editable Three.js scene module back to the blank starter room. */
+  public async writeFreshScene(): Promise<string> {
+    const source = freshSceneSource();
+    await this.writeSceneSource(source);
+    return this.writeActiveSceneSource(source);
+  }
+
+  /** Writes the Codex-editable Three.js scene source. */
+  public async writeSceneSource(source: string): Promise<string> {
+    return this.writeTextFile(this.sceneFile, source, "Write Three.js room scene.");
+  }
+
+  /** Writes the browser-facing scene module only after validation passes. */
+  public async writeActiveSceneSource(source: string): Promise<string> {
+    return this.writeTextFile(this.activeSceneFile, source, "Promote validated Three.js room scene.");
+  }
+
+  /** Reads the editable Three.js scene module as text for Codex context. */
+  public async readRawScene(): Promise<string> {
+    return this.readTextFile(this.sceneFile, "Read Three.js room scene.");
+  }
+
+  /** Reads the browser-facing scene module as text for save/load persistence. */
+  public async readRawActiveScene(): Promise<string> {
+    return this.readTextFile(this.activeSceneFile, "Read active Three.js room scene.");
+  }
+
+  /** Validates scene source before it can be promoted to the browser-facing module. */
+  public validateSceneSource(source: string): string[] {
+    const errors: string[] = [];
+    if (!source.includes("export const roomTitle")) {
+      errors.push("roomScene.ts must export const roomTitle.");
+    }
+    if (!source.includes("export function buildRoom")) {
+      errors.push("roomScene.ts must export function buildRoom(...).");
+    }
+    if (/new\s+THREE\.WebGLRenderer|new\s+THREE\.PerspectiveCamera|document\.|window\.|fetch\s*\(|setTimeout\s*\(|setInterval\s*\(|requestAnimationFrame\s*\(/.test(source)) {
+      errors.push("roomScene.ts must not create renderers/cameras, touch DOM/window, perform network calls, or start timers.");
+    }
+    if (/:\s*THREE\./.test(source)) {
+      errors.push("roomScene.ts must not use THREE.* namespace type annotations; let local Three.js values infer their types.");
+    }
+    const diagnostics = ts.transpileModule(source, {
+      compilerOptions: {
+        isolatedModules: true,
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+      },
+      reportDiagnostics: true,
+    }).diagnostics ?? [];
+    for (const diagnostic of diagnostics) {
+      const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+      errors.push(`TypeScript: ${message}`);
+    }
+    return errors;
+  }
+
+  private async readTextFile(fileName: string, reason: string): Promise<string> {
+    const decision = evaluateSandboxPath(this.sandboxRoot, fileName, reason);
+    if (!decision.allowed || !decision.normalizedPath) {
+      throw new SandboxViolationError(decision.permissionRequest!);
+    }
+    return readFile(decision.normalizedPath, "utf8");
+  }
+
+  private async writeTextFile(fileName: string, source: string, reason: string): Promise<string> {
+    const decision = evaluateSandboxPath(this.sandboxRoot, fileName, reason);
+    if (!decision.allowed || !decision.normalizedPath) {
+      throw new SandboxViolationError(decision.permissionRequest!);
+    }
+    await mkdir(path.dirname(decision.normalizedPath), { recursive: true });
+    await writeFile(decision.normalizedPath, source, "utf8");
     return decision.normalizedPath;
   }
 
@@ -61,6 +139,55 @@ export class RoomCodeRepository {
   }
 }
 
+function freshSceneSource(): string {
+  return `import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";
+
+export const roomTitle = "Bare Room";
+
+export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {
+  scene.background = new THREE.Color("#f1eee8");
+  scene.fog = null;
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(10, 10),
+    new THREE.MeshStandardMaterial({ color: "#8a8479", roughness: 1 }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  root.add(floor);
+
+  const ceiling = new THREE.Mesh(
+    new THREE.PlaneGeometry(10, 10),
+    new THREE.MeshStandardMaterial({ color: "#f1eee8", roughness: 1 }),
+  );
+  ceiling.position.y = 3;
+  ceiling.rotation.x = Math.PI / 2;
+  root.add(ceiling);
+
+  const wallMaterial = new THREE.MeshStandardMaterial({ color: "#d7d2c8", roughness: 1 });
+  const wallGeometry = new THREE.PlaneGeometry(10, 3);
+  const walls: Array<[number, number, number, number]> = [
+    [0, 1.5, -5, 0],
+    [0, 1.5, 5, Math.PI],
+    [-5, 1.5, 0, Math.PI / 2],
+    [5, 1.5, 0, -Math.PI / 2],
+  ];
+  for (const [x, y, z, rotationY] of walls) {
+    const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+    wall.position.set(x, y, z);
+    wall.rotation.y = rotationY;
+    root.add(wall);
+  }
+
+  const ambient = new THREE.HemisphereLight("#ffffff", "#555555", 1.2);
+  root.add(ambient);
+
+  const directional = new THREE.DirectionalLight("#ffffff", 0.6);
+  directional.position.set(2, 4, 3);
+  root.add(directional);
+}
+`;
+}
+
 function parseRoomConfigLiteral(value: string): RoomConfig {
   const parsed = JSON.parse(value) as unknown;
   if (!isRoomConfig(parsed)) {
@@ -74,9 +201,29 @@ function isRoomConfig(value: unknown): value is RoomConfig {
   const candidate = value as RoomConfig;
   return typeof candidate.name === "string"
     && isPalette(candidate.palette)
+    && (candidate.materials === undefined || isMaterials(candidate.materials))
     && Array.isArray(candidate.objects)
     && candidate.objects.every(isRoomObject)
     && typeof candidate.updatedAt === "string";
+}
+
+function isMaterials(value: unknown): value is NonNullable<RoomConfig["materials"]> {
+  if (!value || typeof value !== "object") return false;
+  const materials = value as NonNullable<RoomConfig["materials"]>;
+  return (materials.floor === undefined || isSurfaceMaterial(materials.floor))
+    && (materials.wall === undefined || isSurfaceMaterial(materials.wall))
+    && (materials.ceiling === undefined || isSurfaceMaterial(materials.ceiling));
+}
+
+function isSurfaceMaterial(value: unknown): value is SurfaceMaterial {
+  if (!value || typeof value !== "object") return false;
+  const material = value as SurfaceMaterial;
+  return isSurfaceTexture(material.texture)
+    && (material.color === undefined || typeof material.color === "string");
+}
+
+function isSurfaceTexture(value: unknown): value is SurfaceTexture {
+  return value === "plain" || value === "carpet" || value === "plaster" || value === "tile" || value === "concrete" || value === "wood";
 }
 
 function isPalette(value: unknown): value is RoomConfig["palette"] {

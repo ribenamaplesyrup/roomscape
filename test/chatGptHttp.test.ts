@@ -1,7 +1,11 @@
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AgentRunBus, type ArchitectRunner } from "../src/server/agent/architectRunner";
+import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import { createApp } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
@@ -41,10 +45,13 @@ const noopRunner: ArchitectRunner = {
 describe("ChatGPT auth HTTP flow", () => {
   it("starts Codex ChatGPT login, creates a session after completion, and exposes usage", async () => {
     const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-"));
+    const roomCode = new RoomCodeRepository(roomRoot);
     const handler = createApp({
       store: new MemoryStore(),
       runner: noopRunner,
       bus: new AgentRunBus(),
+      roomCode,
       codex,
     });
 
@@ -58,10 +65,24 @@ describe("ChatGPT auth HTTP flow", () => {
     const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
     expect(completed.body.status).toBe("authenticated");
     expect(completed.body.user.authMode).toBe("chatgpt");
+    expect(completed.body.user).not.toHaveProperty("isArchitectConfigured");
     const sessionCookie = completed.headers["set-cookie"];
 
     const usage = await request<{ usage: CodexRateLimitsResult }>(handler, "GET", "/api/usage", undefined, sessionCookie);
     expect(usage.body.usage.rateLimits?.primary?.usedPercent).toBe(25);
+
+    const reset = await request<{ config: { name: string; objects: unknown[] } }>(handler, "POST", "/api/active-room/reset", undefined, sessionCookie);
+    expect(reset.body.config).toMatchObject({ name: "Bare Room", objects: [] });
+    await expect(readFile(path.join(roomRoot, "roomConfig.ts"), "utf8")).resolves.toContain('name": "Bare Room"');
+    await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
+
+    const saved = await request<{ room: { id: string; sceneSource: string } }>(handler, "POST", "/api/rooms", { name: "Saved scene" }, sessionCookie);
+    expect(saved.body.room.sceneSource).toContain("export function buildRoom");
+
+    await writeFile(path.join(roomRoot, "activeRoomScene.ts"), "export const roomTitle = 'Changed';\n", "utf8");
+    const loaded = await request<{ room: { id: string } }>(handler, "GET", `/api/rooms/${saved.body.room.id}`, undefined, sessionCookie);
+    expect(loaded.body.room.id).toBe(saved.body.room.id);
+    await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
   });
 });
 

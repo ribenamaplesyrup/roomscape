@@ -7,9 +7,6 @@ export interface PublicUser {
   authMode: AuthMode;
   openAiAccountLabel: string;
   planType?: string;
-  architectName: string;
-  architectDescription: string;
-  isArchitectConfigured: boolean;
 }
 
 export interface SavedRoom {
@@ -17,6 +14,7 @@ export interface SavedRoom {
   userId: string;
   name: string;
   config: RoomConfig;
+  sceneSource: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -25,6 +23,7 @@ export type AgentEvent =
   | { type: "log"; message: string; at: string }
   | { type: "cost"; model: string; inputTokens: number; outputTokens: number; usd: number; totalUsd: number; at: string }
   | { type: "room-updated"; config: RoomConfig; at: string }
+  | { type: "scene-updated"; at: string }
   | { type: "permission-request"; request: PermissionRequest; at: string }
   | { type: "complete"; runId: string; at: string }
   | { type: "error"; message: string; at: string };

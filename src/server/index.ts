@@ -9,6 +9,7 @@ import { createApp, roomscapeDataPath } from "./http/app";
 import { JsonStore } from "./storage/jsonStore";
 
 const port = Number(process.env.PORT ?? 8787);
+const host = process.env.HOST ?? "127.0.0.1";
 const hmrPort = Number(process.env.VITE_HMR_PORT ?? port + 10_000);
 const cwd = process.cwd();
 const vite = process.env.NODE_ENV === "production"
@@ -25,10 +26,10 @@ const runner = new CodexSdkArchitectRunner(roomCode);
 const bus = new AgentRunBus();
 const codex = new CodexAppServerClient();
 const staticRoot = path.join(cwd, "dist/client");
-const app = createApp({ store, runner, bus, codex, ...(vite ? { vite } : { staticRoot }) });
+const app = createApp({ store, runner, bus, roomCode, codex, ...(vite ? { vite } : { staticRoot }) });
 
 createServer((req, res) => {
   app(req, res);
-}).listen(port, "127.0.0.1", () => {
-  console.log(`Roomscape running at http://127.0.0.1:${port}`);
+}).listen(port, host, () => {
+  console.log(`Roomscape running at http://${host}:${port}`);
 });

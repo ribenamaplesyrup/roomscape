@@ -14,13 +14,13 @@
     "@openai/agents": "latest",
     "@openai/codex-sdk": "^0.130.0",
     "three": "latest",
-    "vite": "latest"
+    "vite": "^4.5.14"
   },
   "devDependencies": {
     "@types/node": "latest",
     "@types/three": "latest",
     "tsx": "latest",
     "typescript": "latest",
-    "vitest": "latest"
+    "vitest": "^0.34.6"
   }
 }

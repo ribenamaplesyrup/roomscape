@@ -7,8 +7,6 @@ export interface UserRecord {
   openAiAccountHash: string;
   openAiAccountLabel: string;
   planType?: string;
-  architectName: string;
-  architectDescription: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,6 +22,7 @@ export interface RoomRecord {
   userId: string;
   name: string;
   config: RoomConfig;
+  sceneSource: string;
   createdAt: string;
   updatedAt: string;
 }

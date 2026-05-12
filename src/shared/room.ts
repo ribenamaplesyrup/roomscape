@@ -1,4 +1,10 @@
 export type RoomObjectKind = "cube" | "table" | "sofa" | "column" | "light";
+export type SurfaceTexture = "plain" | "carpet" | "plaster" | "tile" | "concrete" | "wood";
+
+export interface SurfaceMaterial {
+  texture: SurfaceTexture;
+  color?: string;
+}
 
 export interface RoomObject {
   id: string;
@@ -18,6 +24,11 @@ export interface RoomConfig {
     ceiling: string;
     accent: string;
   };
+  materials?: {
+    floor?: SurfaceMaterial;
+    wall?: SurfaceMaterial;
+    ceiling?: SurfaceMaterial;
+  };
   objects: RoomObject[];
   updatedAt: string;
 }
@@ -33,3 +44,13 @@ export const emptyRoomConfig: RoomConfig = {
   objects: [],
   updatedAt: new Date(0).toISOString(),
 };
+
+/** Returns a plain, generated-content-free room suitable for starting over. */
+export function freshRoomConfig(): RoomConfig {
+  return {
+    ...emptyRoomConfig,
+    palette: { ...emptyRoomConfig.palette },
+    name: "Bare Room",
+    updatedAt: new Date(0).toISOString(),
+  };
+}

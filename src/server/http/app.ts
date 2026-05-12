@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import type { ViteDevServer } from "vite";
-import { emptyRoomConfig, type RoomConfig } from "../../shared/room";
+import { freshRoomConfig, type RoomConfig } from "../../shared/room";
 import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
+import { RoomCodeRepository } from "../agent/roomCodeRepository";
 import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/appServerClient";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
@@ -16,19 +17,16 @@ interface AppDeps {
   store: DataStore;
   runner: ArchitectRunner;
   bus: AgentRunBus;
+  roomCode?: RoomCodeRepository;
   codex?: CodexAuthBridge;
   vite?: ViteDevServer;
   staticRoot?: string;
 }
 
-export function createApp({ store, runner, bus, codex, vite, staticRoot }: AppDeps) {
+export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
-  let activeConfig: RoomConfig = {
-    ...emptyRoomConfig,
-    name: "Bare Room",
-    updatedAt: new Date(0).toISOString(),
-  };
+  let activeConfig: RoomConfig = freshRoomConfig();
 
   /** Handles API routes first, then delegates static and HMR traffic to Vite in development. */
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -107,17 +105,15 @@ export function createApp({ store, runner, bus, codex, vite, staticRoot }: AppDe
       sendJson(res, 200, { usage: await mapCodexErrors(() => codex.readRateLimits()) });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/api/architect") {
-      sendJson(res, 200, { user: await auth.updateArchitectProfile(readCookie(req, "roomscape_session"), await readJson(req)) });
-      return;
-    }
     if (req.method === "GET" && url.pathname === "/api/rooms") {
       sendJson(res, 200, { rooms: await rooms.listForUser(user.id) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/rooms") {
-      const body = await readJson<{ name: string; config: RoomConfig }>(req);
-      sendJson(res, 201, { room: await rooms.save(user.id, body.name, body.config) });
+      const body = await readJson<{ name: string; config?: RoomConfig }>(req);
+      const code = requireRoomCode(roomCode);
+      const sceneSource = await code.readRawActiveScene();
+      sendJson(res, 201, { room: await rooms.save(user.id, body.name, body.config ?? activeConfig, sceneSource) });
       return;
     }
     const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
@@ -125,10 +121,25 @@ export function createApp({ store, runner, bus, codex, vite, staticRoot }: AppDe
       const room = await rooms.get(user.id, roomMatch[1]);
       if (!room) throw new HttpError(404, "Room not found.");
       activeConfig = room.config;
+      const code = requireRoomCode(roomCode);
+      await code.writeSceneSource(room.sceneSource);
+      const validationErrors = code.validateSceneSource(room.sceneSource);
+      if (validationErrors.length > 0) {
+        throw new HttpError(422, `Saved scene is invalid:\n${validationErrors.join("\n")}`);
+      }
+      await code.writeActiveSceneSource(room.sceneSource);
       sendJson(res, 200, { room });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/active-room") {
+      sendJson(res, 200, { config: activeConfig });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
+      activeConfig = freshRoomConfig();
+      const code = requireRoomCode(roomCode);
+      await code.writeConfig(activeConfig);
+      await code.writeFreshScene();
       sendJson(res, 200, { config: activeConfig });
       return;
     }
@@ -141,7 +152,6 @@ export function createApp({ store, runner, bus, codex, vite, staticRoot }: AppDe
           runId,
           prompt: body.prompt,
           model: body.model,
-          persona: `${user.architectName}: ${user.architectDescription}`,
           currentConfig,
         },
         (event) => {
@@ -176,6 +186,13 @@ function requireCodexBridge(codex: CodexAuthBridge | undefined): CodexAuthBridge
     throw new HttpError(503, "Codex app-server bridge is not available.");
   }
   return codex;
+}
+
+function requireRoomCode(roomCode: RoomCodeRepository | undefined): RoomCodeRepository {
+  if (!roomCode) {
+    throw new HttpError(503, "Room code repository is not available.");
+  }
+  return roomCode;
 }
 
 async function mapCodexErrors<T>(work: () => Promise<T>): Promise<T> {

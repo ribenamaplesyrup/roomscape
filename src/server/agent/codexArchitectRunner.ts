@@ -14,26 +14,29 @@ interface CodexThreadFactory {
 
 export interface CodexSdkArchitectRunnerOptions {
   codex?: CodexThreadFactory;
+  maxRepairAttempts?: number;
 }
 
 /** Runs the Architect through the Codex SDK while keeping writes scoped to the active room sandbox. */
 export class CodexSdkArchitectRunner implements ArchitectRunner {
   private readonly codex: CodexThreadFactory;
+  private readonly maxRepairAttempts: number;
 
   public constructor(
     private readonly roomCode: RoomCodeRepository,
     options: CodexSdkArchitectRunnerOptions = {},
   ) {
     this.codex = options.codex ?? new Codex();
+    this.maxRepairAttempts = options.maxRepairAttempts ?? 1;
   }
 
   /** Streams Codex work logs, validates sandbox file changes, and reloads the generated room config. */
   public async run(input: ArchitectRunInput, emit: (event: AgentEvent) => void): Promise<void> {
     try {
-      emit(log(`Architect persona loaded: ${input.persona}`));
-      emit(log(`Starting Codex Architect with ${input.model}.`));
+      emit(log(`Starting Codex Three.js scene edit with ${input.model}.`));
       this.preflightPrompt(input.prompt);
-      await this.roomCode.writeConfig(input.currentConfig);
+      const currentScene = await this.roomCode.readRawScene();
+      const lastGoodScene = await this.roomCode.readRawActiveScene();
 
       const thread = this.codex.startThread({
         model: input.model,
@@ -43,15 +46,13 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         approvalPolicy: "never",
         networkAccessEnabled: false,
       });
-      const turn = await thread.runStreamed(buildArchitectPrompt(input));
+      const initialTurn = await thread.runStreamed(buildArchitectPrompt(input, currentScene));
+      if (await this.streamTurn(initialTurn.events, emit)) return;
 
-      for await (const event of turn.events) {
-        const shouldHalt = this.handleCodexEvent(event, emit);
-        if (shouldHalt) return;
-      }
-
-      const config = await this.roomCode.readConfig();
-      emit({ type: "room-updated", config, at: new Date().toISOString() });
+      const sceneSource = await this.validateOrRepairScene(thread, input, emit, lastGoodScene);
+      if (!sceneSource) return;
+      await this.roomCode.writeActiveSceneSource(sceneSource);
+      emit({ type: "scene-updated", at: new Date().toISOString() });
       emit({ type: "complete", runId: input.runId, at: new Date().toISOString() });
     } catch (error) {
       if (error instanceof SandboxViolationError) {
@@ -65,6 +66,41 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
       }
       emit({ type: "error", message: error instanceof Error ? error.message : "Unknown Codex runner error.", at: new Date().toISOString() });
     }
+  }
+
+  private async validateOrRepairScene(
+    thread: CodexThread,
+    input: ArchitectRunInput,
+    emit: (event: AgentEvent) => void,
+    lastGoodScene: string,
+  ): Promise<string | null> {
+    for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt += 1) {
+      const sceneSource = await this.roomCode.readRawScene();
+      const validationErrors = this.roomCode.validateSceneSource(sceneSource);
+      if (validationErrors.length === 0) {
+        return sceneSource;
+      }
+      if (attempt >= this.maxRepairAttempts) {
+        await this.roomCode.writeSceneSource(lastGoodScene);
+        emit({ type: "error", message: `Generated scene did not pass validation after repair:\n${validationErrors.join("\n")}`, at: new Date().toISOString() });
+        return null;
+      }
+
+      emit(log(`Generated scene failed validation. Asking Codex to repair it without changing the user intent.\n${validationErrors.join("\n")}`));
+      const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors));
+      if (await this.streamTurn(repairTurn.events, emit)) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  private async streamTurn(events: AsyncIterable<ThreadEvent>, emit: (event: AgentEvent) => void): Promise<boolean> {
+    for await (const event of events) {
+      const shouldHalt = this.handleCodexEvent(event, emit);
+      if (shouldHalt) return true;
+    }
+    return false;
   }
 
   private preflightPrompt(prompt: string): void {
@@ -109,24 +145,46 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
   }
 }
 
-function buildArchitectPrompt(input: ArchitectRunInput): string {
+function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): string {
   return [
-    "You are the Roomscape Architect.",
-    `Persona: ${input.persona}`,
+    "Edit only ./roomScene.ts in the current working directory.",
+    "Do not read, write, create, delete, or request access to files other than ./roomScene.ts.",
+    "You have full creative control over the Three.js scene inside that one file.",
+    "The host app owns the camera, controls, UI, renderer, and hot reload. Do not create a renderer, camera, controls, DOM nodes, network calls, timers, or imports beyond type-only local imports.",
+    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
+    "Do not write THREE.* TypeScript type annotations such as : THREE.DataTexture; let values infer their types inside buildRoom.",
+    "Avoid indexed array mutation patterns that can produce possibly-undefined TypeScript errors; destructure fixed object groups before setting properties.",
+    "Build all geometry, materials, textures, fog, and lights inside buildRoom by adding objects to root and setting scene.background/fog as needed.",
+    "For material requests, implement real Three.js materials and procedural DataTexture work where useful. Do not use CanvasTexture, document.createElement, or any DOM canvas API.",
+    "Do not fake a floor material with a raised slab unless the user asks for a rug or object.",
+    "Optimize for real-time browser use: avoid unbounded loops, huge geometries, external assets, and excessive lights.",
+    "After editing, summarize the Three.js changes you made.",
     "",
-    "Edit only ./roomConfig.ts in the current working directory.",
-    "Do not read, write, create, delete, or request access to files outside the current working directory.",
-    "Keep the file as TypeScript that imports RoomConfig and exports a JSON-compatible literal named roomConfig using `satisfies RoomConfig`.",
-    "Use only these object kinds: cube, table, sofa, column, light.",
-    "Every object must include all required fields: id, kind, label, color, position, and scale. Light objects may also include an optional numeric intensity.",
-    "Use stable unique string ids such as carpet-field, carpet-tile-1, table-1, light-1.",
-    "After editing, provide a concise summary of what changed.",
-    "",
-    "Current room config:",
-    JSON.stringify(input.currentConfig, null, 2),
+    "Current roomScene.ts:",
+    currentScene,
     "",
     "User request:",
     input.prompt,
+  ].join("\n");
+}
+
+function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, validationErrors: string[]): string {
+  return [
+    "Repair ./roomScene.ts so it satisfies validation while still fulfilling the original user request.",
+    "Edit only ./roomScene.ts. Do not access any other file.",
+    "Do not remove the user's intended visual change; implement it another safe way if the current approach violates constraints.",
+    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
+    "Use Three.js geometry, materials, lights, fog, and procedural DataTexture only. Do not use DOM APIs, CanvasTexture, renderer/camera creation, network calls, or timers.",
+    "Do not write THREE.* TypeScript namespace annotations.",
+    "",
+    "Validation errors:",
+    validationErrors.join("\n"),
+    "",
+    "Original user request:",
+    input.prompt,
+    "",
+    "Current invalid roomScene.ts:",
+    invalidScene,
   ].join("\n");
 }
 

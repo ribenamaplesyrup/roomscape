@@ -1,0 +1,20 @@
+services:
+  roomscape:
+    build:
+      context: .
+    command: sh -lc "npm ci && npm run dev"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8788
+      VITE_HMR_PORT: 18788
+    ports:
+      - "8788:8788"
+      - "18788:18788"
+    volumes:
+      - .:/workspace
+      - roomscape_node_modules:/workspace/node_modules
+      - roomscape_data:/workspace/.roomscape
+
+volumes:
+  roomscape_node_modules:
+  roomscape_data:

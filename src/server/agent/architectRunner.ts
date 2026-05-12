@@ -7,7 +7,6 @@ export interface ArchitectRunInput {
   runId: string;
   prompt: string;
   model: string;
-  persona: string;
   currentConfig: RoomConfig;
 }
 
@@ -19,6 +18,9 @@ const costPerThousand: Record<string, number> = {
   "gpt-5.5": 0.02,
   "gpt-5.4": 0.012,
   "gpt-5.4-mini": 0.003,
+  "gpt-5.3-codex-spark": 0.002,
+  "gpt-5.3-codex": 0.006,
+  "gpt-5.2": 0.004,
 };
 
 export class DeterministicArchitectRunner implements ArchitectRunner {
@@ -27,7 +29,6 @@ export class DeterministicArchitectRunner implements ArchitectRunner {
   /** Simulates the SDK-facing agent loop while preserving the real sandbox and telemetry contracts. */
   public async run(input: ArchitectRunInput, emit: (event: AgentEvent) => void): Promise<void> {
     try {
-      emit(log(`Architect persona loaded: ${input.persona}`));
       emit(log(`Planning room mutation with ${input.model}.`));
 
       if (input.prompt.includes("../") || input.prompt.toLowerCase().includes("outside sandbox")) {

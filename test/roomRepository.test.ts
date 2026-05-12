@@ -6,10 +6,10 @@ import { RoomRepository } from "../src/server/storage/roomRepository";
 describe("room repository", () => {
   it("saves and loads room configurations per user", async () => {
     const repo = new RoomRepository(new MemoryStore());
-    const room = await repo.save("user-a", "First room", emptyRoomConfig);
-    await repo.save("user-b", "Other room", emptyRoomConfig);
+    const room = await repo.save("user-a", "First room", emptyRoomConfig, "export const roomTitle = 'First';");
+    await repo.save("user-b", "Other room", emptyRoomConfig, "export const roomTitle = 'Other';");
 
-    expect(await repo.get("user-a", room.id)).toMatchObject({ name: "First room" });
+    expect(await repo.get("user-a", room.id)).toMatchObject({ name: "First room", sceneSource: "export const roomTitle = 'First';" });
     expect(await repo.get("user-b", room.id)).toBeNull();
     expect(await repo.listForUser("user-a")).toHaveLength(1);
   });
