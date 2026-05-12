@@ -8,6 +8,7 @@ Roomscape can run on Railway as a single Node web service, but the current app i
 - Railway will use `railway.json` and the root `Dockerfile`.
 - The app listens on `process.env.PORT` and defaults to `0.0.0.0`, which allows Railway to route public traffic to it.
 - Configure Railway's healthcheck path as `/api/health` if you override the checked-in config.
+- Keep the checked-in `.dockerignore` in place so local data, build output, dependencies, and Git metadata are not copied into the image.
 
 ## Runtime Variables
 
@@ -16,6 +17,8 @@ Roomscape can run on Railway as a single Node web service, but the current app i
 - `ROOMSCAPE_DATA_DIR`: optional directory for the JSON store, for example `/data` when a Railway volume is mounted there.
 - `ROOMSCAPE_DATA_PATH`: optional full path to the JSON store. Takes precedence over `ROOMSCAPE_DATA_DIR`.
 - `DATABASE_URL`: reserved for the upcoming PostgreSQL-backed store. If this is set today, Roomscape fails on startup instead of silently using local JSON storage.
+
+Use `.env.example` as the local template for the interim volume-backed deployment.
 
 ## Persistent Data
 
