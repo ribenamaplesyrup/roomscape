@@ -78,3 +78,7 @@ export interface ChatGptRateLimitBucket {
   };
   rateLimitReachedType?: string | null;
 }
+
+export interface ActiveSceneModuleSource {
+  source: string;
+}

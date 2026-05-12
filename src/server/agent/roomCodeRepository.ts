@@ -70,6 +70,11 @@ export class RoomCodeRepository {
     return this.readTextFile(this.activeSceneFile, "Read active Three.js room scene.");
   }
 
+  /** Reads the browser-facing scene module transpiled to importable JavaScript. */
+  public async readActiveSceneJavaScript(): Promise<string> {
+    return transpileSceneSource(await this.readRawActiveScene());
+  }
+
   /** Validates scene source before it can be promoted to the browser-facing module. */
   public validateSceneSource(source: string): string[] {
     const errors: string[] = [];
@@ -147,6 +152,16 @@ export class RoomCodeRepository {
     }
     return decision.normalizedPath;
   }
+}
+
+export function transpileSceneSource(source: string): string {
+  return ts.transpileModule(source, {
+    compilerOptions: {
+      importsNotUsedAsValues: ts.ImportsNotUsedAsValues.Remove,
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
 }
 
 function findUnsafeShorthandProperties(source: string): string[] {

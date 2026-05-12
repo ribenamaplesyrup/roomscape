@@ -176,6 +176,11 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       sendJson(res, 200, { config: await activeRooms.getConfig(user.id) });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/active-room/scene-module") {
+      const code = requireRoomCode(roomCode);
+      sendJson(res, 200, { source: await code.readActiveSceneJavaScript() });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
       cancelUserRuns(user.id, "Room reset; cleared active room edits.");
       const activeConfig = await activeRooms.saveConfig(user.id, freshRoomConfig());

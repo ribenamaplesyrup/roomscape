@@ -1,5 +1,5 @@
 import "./styles/app.css";
-import type { AgentEvent, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
+import type { ActiveSceneModuleSource, AgentEvent, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
 import { modelOptions } from "../shared/models";
 import type { RoomConfig } from "../shared/room";
 import { roomConfig } from "../../sandbox/rooms/active/roomConfig";
@@ -228,6 +228,7 @@ function renderWorkspace() {
   renderer = new RoomRenderer(document.querySelector("#room-canvas")!);
   applyActiveScene();
   renderer.start();
+  void applyLatestActiveScene();
   restoreStoredPose();
   startPosePersistence();
   startUsagePolling();
@@ -260,6 +261,11 @@ function applySceneModule(module: RoomSceneModule) {
 
 async function applyLatestActiveScene() {
   try {
+    const runtimeModule = await loadRuntimeActiveSceneModule();
+    if (runtimeModule) {
+      applySceneModule(runtimeModule);
+      return;
+    }
     const importActiveRoomScene = activeRoomSceneImporters["../../sandbox/rooms/active/activeRoomScene.ts"];
     if (!importActiveRoomScene) throw new Error("Active room scene importer is unavailable.");
     const module = await importActiveRoomScene();
@@ -268,6 +274,17 @@ async function applyLatestActiveScene() {
     pushLog(`ERROR: Unable to load active scene: ${error instanceof Error ? error.message : "Unknown scene load error."}`);
     applyActiveScene();
     updateTelemetry();
+  }
+}
+
+async function loadRuntimeActiveSceneModule(): Promise<RoomSceneModule | null> {
+  if (!state.user) return null;
+  const result = await api<ActiveSceneModuleSource>("/api/active-room/scene-module");
+  const url = URL.createObjectURL(new Blob([result.source], { type: "text/javascript" }));
+  try {
+    return await import(/* @vite-ignore */ url) as RoomSceneModule;
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 

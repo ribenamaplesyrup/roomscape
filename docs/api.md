@@ -96,6 +96,14 @@ Loads a saved room owned by the current user. The server writes the saved scene 
 
 Returns the current in-memory active `RoomConfig`.
 
+### `GET /api/active-room/scene-module`
+
+Returns the current validated active scene module transpiled to browser-importable JavaScript.
+
+```json
+{ "source": "export const roomTitle = ..." }
+```
+
 ### `POST /api/active-room/reset`
 
 Cancels active room edits, resets the in-memory config, writes a fresh starter scene, and returns the fresh config.
