@@ -79,6 +79,28 @@ describe("first-person navigation", () => {
     expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, -2), colliders)).toBe(false);
   });
 
+  it("ignores generated BackSide sky shells as navigation blockers", () => {
+    const root = new THREE.Group();
+    const skyShell = new THREE.Mesh(
+      new THREE.SphereGeometry(45, 16, 12),
+      new THREE.MeshBasicMaterial({ side: THREE.BackSide }),
+    );
+    skyShell.position.set(0, 2.6, -10);
+    root.add(skyShell);
+
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 3, 4),
+      new THREE.MeshBasicMaterial(),
+    );
+    wall.position.set(3, 1.5, 0);
+    root.add(wall);
+
+    const colliders = collectNavigationColliders(root);
+
+    expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, 0), colliders)).toBe(false);
+    expect(positionIntersectsColliders(new THREE.Vector3(3, 1.65, 0), colliders)).toBe(true);
+  });
+
   it("detects generated animation hooks only when the scene asks for continuous rendering", () => {
     const scene = new THREE.Scene();
     const root = new THREE.Group();

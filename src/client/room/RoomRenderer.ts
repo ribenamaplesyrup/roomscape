@@ -480,6 +480,7 @@ export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.6
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     if (object.userData.collider === false || object.userData.walkable === true) return;
+    if (isBackSideMaterial(object.material)) return;
     if (isDecorativeNavigationGeometry(object.geometry)) return;
     const bounds = new THREE.Box3().setFromObject(object);
     if (bounds.isEmpty()) return;
@@ -496,6 +497,11 @@ export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.6
 
 function isDecorativeNavigationGeometry(geometry: THREE.BufferGeometry): boolean {
   return geometry.type === "TubeGeometry";
+}
+
+function isBackSideMaterial(material: THREE.Material | THREE.Material[]): boolean {
+  const materials = Array.isArray(material) ? material : [material];
+  return materials.length > 0 && materials.every((entry) => entry.side === THREE.BackSide);
 }
 
 function isMeaningfulCollider(bounds: THREE.Box3): boolean {
