@@ -186,6 +186,11 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       sendJson(res, 202, { runId });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/agent/runs/cancel") {
+      cancelAllRuns("Room edit cancelled.");
+      sendJson(res, 200, { ok: true });
+      return;
+    }
     const eventMatch = url.pathname.match(/^\/api\/agent\/runs\/([^/]+)\/events$/);
     if (req.method === "GET" && eventMatch?.[1]) {
       res.writeHead(200, {

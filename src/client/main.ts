@@ -149,11 +149,14 @@ function renderWorkspace() {
           <button id="logout" class="quiet-button" type="button">Sign out</button>
         </div>
         <form id="prompt-form" class="prompt-form">
-          <select name="model">
+          <select id="model-select" name="model" ${state.isWorking ? "disabled" : ""}>
             ${modelOptions.map((model) => `<option value="${model.id}">${model.label}</option>`).join("")}
           </select>
-          <textarea name="prompt" rows="4" placeholder="Describe the exact room change." required></textarea>
-          <button type="submit">Build</button>
+          <textarea id="prompt-input" name="prompt" rows="4" placeholder="Describe the exact room change." required ${state.isWorking ? "disabled" : ""}></textarea>
+          <div class="prompt-actions">
+            <button id="build-button" type="submit" ${state.isWorking ? "disabled" : ""}>Build</button>
+            <button id="cancel-edit" class="quiet-button danger-button" type="button" ${state.isWorking ? "" : "hidden"}>Cancel</button>
+          </div>
         </form>
         <div class="actions">
           <input id="room-name" aria-label="Room name" value="${escapeHtml(state.config.name)}" />
@@ -185,6 +188,7 @@ function renderWorkspace() {
   startUsagePolling();
   reconnectActiveRun();
   document.querySelector<HTMLFormElement>("#prompt-form")!.addEventListener("submit", submitPrompt);
+  document.querySelector<HTMLButtonElement>("#cancel-edit")!.addEventListener("click", cancelRoomEdit);
   document.querySelector<HTMLButtonElement>("#save-room")!.addEventListener("click", saveRoom);
   document.querySelector<HTMLButtonElement>("#reset-room")!.addEventListener("click", resetRoom);
   document.querySelector<HTMLSelectElement>("#room-loader")!.addEventListener("change", loadRoomSelection);
@@ -215,20 +219,50 @@ async function logout() {
 
 async function submitPrompt(event: SubmitEvent) {
   event.preventDefault();
+  if (state.isWorking) {
+    state.logs.push("Cancel the active edit before starting a new one.");
+    updateTelemetry();
+    return;
+  }
   const form = event.currentTarget as HTMLFormElement;
   const values = Object.fromEntries(new FormData(form).entries());
   const prompt = String(values.prompt ?? "").trim();
   if (!prompt) return;
-  const result = await api<{ runId: string }>("/api/agent/runs", {
-    method: "POST",
-    body: { prompt, model: values.model, currentConfig: state.config },
-  });
-  state.activeRunIds = [...state.activeRunIds, result.runId];
   state.isWorking = true;
   persistSessionState();
   updateTelemetry();
-  streamRun(result.runId);
-  form.reset();
+  try {
+    const result = await api<{ runId: string }>("/api/agent/runs", {
+      method: "POST",
+      body: { prompt, model: values.model, currentConfig: state.config },
+    });
+    state.activeRunIds = [...state.activeRunIds, result.runId];
+    persistSessionState();
+    streamRun(result.runId);
+    form.reset();
+  } catch (error) {
+    state.isWorking = false;
+    state.logs.push(`ERROR: ${error instanceof Error ? error.message : "Unable to start room edit."}`);
+  } finally {
+    updateTelemetry();
+    persistSessionState();
+  }
+}
+
+async function cancelRoomEdit() {
+  if (!state.isWorking && state.activeRunIds.length === 0) return;
+  try {
+    await api("/api/agent/runs/cancel", { method: "POST" });
+  } catch (error) {
+    state.logs.push(`ERROR: ${error instanceof Error ? error.message : "Unable to cancel room edit."}`);
+  } finally {
+    closeActiveSources();
+    state.activeRunIds = [];
+    state.isWorking = false;
+    state.logs.push("Room edit cancelled.");
+    updateTelemetry();
+    persistSessionState();
+  }
 }
 
 function streamRun(runId: string) {
@@ -330,6 +364,18 @@ function updateTelemetry() {
   document.querySelector("#logs")!.textContent = state.logs.join("\n");
   const working = document.querySelector<HTMLElement>("#working-indicator");
   if (working) working.hidden = !state.isWorking;
+  updatePromptControls();
+}
+
+function updatePromptControls() {
+  const prompt = document.querySelector<HTMLTextAreaElement>("#prompt-input");
+  const model = document.querySelector<HTMLSelectElement>("#model-select");
+  const build = document.querySelector<HTMLButtonElement>("#build-button");
+  const cancel = document.querySelector<HTMLButtonElement>("#cancel-edit");
+  if (prompt) prompt.disabled = state.isWorking;
+  if (model) model.disabled = state.isWorking;
+  if (build) build.disabled = state.isWorking;
+  if (cancel) cancel.hidden = !state.isWorking;
 }
 
 function accountLabel(): string {

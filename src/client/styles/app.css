@@ -191,6 +191,29 @@ button:focus-visible {
   min-height: 118px;
 }
 
+.prompt-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.danger-button {
+  color: #ffd8cf;
+}
+
+.danger-button:hover {
+  border-color: rgba(255, 180, 166, 0.45);
+  background: rgba(255, 120, 96, 0.12);
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .actions {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }

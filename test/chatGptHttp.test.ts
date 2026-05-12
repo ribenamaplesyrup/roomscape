@@ -85,7 +85,7 @@ describe("ChatGPT auth HTTP flow", () => {
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
   });
 
-  it("cancels active and queued room edits when the room is reset or the user signs out", async () => {
+  it("cancels active and queued room edits when requested, reset, or the user signs out", async () => {
     const codex = new FakeCodexBridge();
     codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-runs-"));
@@ -101,6 +101,14 @@ describe("ChatGPT auth HTTP flow", () => {
     const sessionCookie = completed.headers["set-cookie"];
 
     await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, sessionCookie);
+    await runner.waitForStart();
+    expect(runner.lastSignal?.aborted).toBe(false);
+
+    await request<{ ok: boolean }>(handler, "POST", "/api/agent/runs/cancel", undefined, sessionCookie);
+    expect(runner.lastSignal?.aborted).toBe(true);
+
+    runner.resetStartWaiter();
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a lamp", model: "gpt-5.5" }, sessionCookie);
     await runner.waitForStart();
     expect(runner.lastSignal?.aborted).toBe(false);
 
