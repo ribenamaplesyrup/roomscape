@@ -114,7 +114,7 @@ describe("Codex SDK architect runner", () => {
     const root = await mkRoomRoot();
     await writeFile(path.join(root, "activeRoomScene.ts"), "export const roomTitle = 'Still valid';\n", "utf8");
     const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(path.join(root, "roomScene.ts"), "export const roomTitle = 'Broken';\n", "utf8"));
-    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex, maxRepairAttempts: 0 });
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex, maxRepairAttempts: 0, maxRegenerationAttempts: 0 });
     const events: AgentEvent[] = [];
 
     await runner.run(runInput({ prompt: "Break the scene", currentConfig: emptyRoomConfig }), (event) => events.push(event));
@@ -181,6 +181,38 @@ describe("Codex SDK architect runner", () => {
     expect(events.some((event) => event.type === "log" && event.message.includes("repair 2/2"))).toBe(true);
     expect(events.some((event) => event.type === "scene-updated")).toBe(true);
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Second repair green table scene");
+    expect(events.at(-1)).toMatchObject({ type: "complete" });
+  });
+
+  it("retries the whole scene edit after repairs fail", async () => {
+    const root = await mkRoomRoot();
+    await writeFile(path.join(root, "activeRoomScene.ts"), "export const roomTitle = 'Still valid';\n", "utf8");
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), "export const roomTitle = 'Broken';\n", "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), "export const roomTitle = 'Still broken';\n", "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeRoomScene(root, "Regenerated observatory scene"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex, maxRepairAttempts: 1, maxRegenerationAttempts: 1 });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Create a compact orbital observatory demo room", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(3);
+    expect(codex.thread.prompts[1]).toContain("repair attempt 1 of 1");
+    expect(codex.thread.prompts[2]).toContain("Try the scene edit again");
+    expect(codex.thread.prompts[2]).toContain("Validation errors to avoid");
+    expect(events.some((event) => event.type === "log" && event.message.includes("Retrying the whole scene edit 1/1"))).toBe(true);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Regenerated observatory scene");
     expect(events.at(-1)).toMatchObject({ type: "complete" });
   });
 

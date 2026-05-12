@@ -21,12 +21,14 @@ interface SceneEditPhase {
 export interface CodexSdkArchitectRunnerOptions {
   codex?: CodexThreadFactory;
   maxRepairAttempts?: number;
+  maxRegenerationAttempts?: number;
 }
 
 /** Runs the Architect through the Codex SDK while keeping writes scoped to the active room sandbox. */
 export class CodexSdkArchitectRunner implements ArchitectRunner {
   private readonly codex: CodexThreadFactory;
   private readonly maxRepairAttempts: number;
+  private readonly maxRegenerationAttempts: number;
 
   public constructor(
     private readonly roomCode: RoomCodeRepository,
@@ -34,6 +36,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
   ) {
     this.codex = options.codex ?? new Codex();
     this.maxRepairAttempts = options.maxRepairAttempts ?? 2;
+    this.maxRegenerationAttempts = options.maxRegenerationAttempts ?? 1;
   }
 
   /** Streams Codex work logs, validates sandbox file changes, and reloads the generated room config. */
@@ -109,33 +112,44 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     lastGoodScene: string,
     targetedValidationPrompt: string | null = input.prompt,
   ): Promise<string | null> {
-    for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt += 1) {
-      throwIfAborted(input.signal);
-      const sceneSource = await this.roomCode.readRawScene();
-      const normalizedSource = this.roomCode.normalizeSceneSource(sceneSource);
-      if (normalizedSource !== sceneSource) {
-        await this.roomCode.writeSceneSource(normalizedSource);
-        emit(log("Cleaned unsafe Three.js namespace type annotations before validation."));
+    let latestValidationErrors: string[] = [];
+    for (let regenerationAttempt = 0; regenerationAttempt <= this.maxRegenerationAttempts; regenerationAttempt += 1) {
+      for (let repairAttempt = 0; repairAttempt <= this.maxRepairAttempts; repairAttempt += 1) {
+        throwIfAborted(input.signal);
+        const sceneSource = await this.roomCode.readRawScene();
+        const normalizedSource = this.roomCode.normalizeSceneSource(sceneSource);
+        if (normalizedSource !== sceneSource) {
+          await this.roomCode.writeSceneSource(normalizedSource);
+          emit(log("Cleaned unsafe Three.js namespace type annotations before validation."));
+        }
+        throwIfAborted(input.signal);
+        const validationErrors = this.roomCode.validateSceneSource(normalizedSource);
+        if (targetedValidationPrompt) {
+          validationErrors.push(...validateTargetedEditScope(targetedValidationPrompt, originalScene, normalizedSource));
+        }
+        if (validationErrors.length === 0) {
+          return normalizedSource;
+        }
+        latestValidationErrors = validationErrors;
+        if (repairAttempt >= this.maxRepairAttempts) break;
+
+        emit(log(`Generated scene failed validation. Retrying repair ${repairAttempt + 1}/${this.maxRepairAttempts} with the validation errors in mind.\n${validationErrors.join("\n")}`));
+        const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors, repairAttempt + 1, this.maxRepairAttempts), turnOptions(input.signal));
+        if (await this.streamTurn(repairTurn.events, emit, input.signal)) {
+          return null;
+        }
       }
-      throwIfAborted(input.signal);
-      const validationErrors = this.roomCode.validateSceneSource(normalizedSource);
-      if (targetedValidationPrompt) {
-        validationErrors.push(...validateTargetedEditScope(targetedValidationPrompt, originalScene, normalizedSource));
-      }
-      if (validationErrors.length === 0) {
-        return normalizedSource;
-      }
-      if (attempt >= this.maxRepairAttempts) {
+
+      if (regenerationAttempt >= this.maxRegenerationAttempts) {
         await this.roomCode.writeSceneSource(lastGoodScene);
-        emit({ type: "error", message: `Generated scene did not pass validation after repair:\n${validationErrors.join("\n")}`, at: new Date().toISOString() });
+        emit({ type: "error", message: `Generated scene did not pass validation after retries:\n${latestValidationErrors.join("\n")}`, at: new Date().toISOString() });
         return null;
       }
 
-      emit(log(`Generated scene failed validation. Retrying repair ${attempt + 1}/${this.maxRepairAttempts} with the validation errors in mind.\n${validationErrors.join("\n")}`));
-      const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors, attempt + 1, this.maxRepairAttempts), turnOptions(input.signal));
-      if (await this.streamTurn(repairTurn.events, emit, input.signal)) {
-        return null;
-      }
+      await this.roomCode.writeSceneSource(originalScene);
+      emit(log(`Generated scene still failed after repair. Retrying the whole scene edit ${regenerationAttempt + 1}/${this.maxRegenerationAttempts} from the last valid room with the validation errors in mind.\n${latestValidationErrors.join("\n")}`));
+      const retryTurn = await thread.runStreamed(buildRegenerationPrompt(input, originalScene, latestValidationErrors, regenerationAttempt + 1, this.maxRegenerationAttempts), turnOptions(input.signal));
+      if (await this.streamTurn(retryTurn.events, emit, input.signal)) return null;
     }
     return null;
   }
@@ -349,6 +363,29 @@ function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, valid
     "",
     "Current invalid roomScene.ts:",
     invalidScene,
+  ].join("\n");
+}
+
+function buildRegenerationPrompt(input: ArchitectRunInput, originalScene: string, validationErrors: string[], regenerationAttempt: number, maxRegenerationAttempts: number): string {
+  return [
+    "Try the scene edit again from the last valid roomScene.ts.",
+    `This is full scene retry ${regenerationAttempt} of ${maxRegenerationAttempts} after repair attempts did not produce valid code.`,
+    "Edit only ./roomScene.ts. Do not access any other file.",
+    "The previous generated scene failed validation; avoid repeating the same mistakes while still fulfilling the original user request.",
+    "Prefer a simpler, more reliable implementation if needed, but keep the rendered result atmospheric, crafted, and user-visible rather than sparse placeholders.",
+    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
+    "Use scene.userData.startPose or root.userData.startPose for directional worlds instead of creating or mutating a camera.",
+    "Use Three.js geometry, materials, lights, fog, procedural DataTexture, and pure local helper functions only. Do not use DOM APIs, CanvasTexture, renderer/camera creation, network calls, or timers.",
+    "Do not write THREE.* TypeScript namespace annotations.",
+    "",
+    "Validation errors to avoid:",
+    validationErrors.join("\n"),
+    "",
+    "Original user request:",
+    input.prompt,
+    "",
+    "Last valid roomScene.ts to edit from:",
+    originalScene,
   ].join("\n");
 }
 
