@@ -75,6 +75,8 @@ Roomscape uses Codex-managed ChatGPT auth rather than GitHub, username/password,
 
 Local development can still use the browser callback flow. Railway production defaults to the official Codex device-code flow: `POST /api/auth/chatgpt/start` returns `verificationUrl` and `userCode`, then the frontend sends the user to `https://auth.openai.com/codex/device` and polls completion.
 
+Some ChatGPT accounts require enabling device-code authorization for Codex in ChatGPT Security Settings before the OpenAI device page will accept the code. After enabling that setting, return to Roomscape and start sign-in again to generate a fresh code.
+
 Completed hosted logins are stored under a per-user Codex auth reference in `ROOMSCAPE_CODEX_AUTH_DIR`, defaulting to `${ROOMSCAPE_DATA_DIR}/codex-auth`. Agent runs receive that user's `CODEX_HOME`, so Codex SDK edits are not powered by a single global Railway account.
 
 Key environment variables:
