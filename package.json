@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@openai/agents": "latest",
+    "@openai/codex-sdk": "^0.130.0",
     "three": "latest",
     "vite": "latest"
   },

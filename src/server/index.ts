@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import path from "node:path";
 import { createServer as createViteServer } from "vite";
-import { DeterministicArchitectRunner, AgentRunBus } from "./agent/architectRunner";
+import { AgentRunBus } from "./agent/architectRunner";
+import { CodexSdkArchitectRunner } from "./agent/codexArchitectRunner";
 import { CodexAppServerClient } from "./codex/appServerClient";
 import { RoomCodeRepository } from "./agent/roomCodeRepository";
 import { createApp, roomscapeDataPath } from "./http/app";
@@ -20,7 +21,7 @@ const vite = process.env.NODE_ENV === "production"
 
 const store = new JsonStore(roomscapeDataPath(cwd));
 const roomCode = new RoomCodeRepository(path.join(cwd, "sandbox/rooms/active"));
-const runner = new DeterministicArchitectRunner(roomCode);
+const runner = new CodexSdkArchitectRunner(roomCode);
 const bus = new AgentRunBus();
 const codex = new CodexAppServerClient();
 const staticRoot = path.join(cwd, "dist/client");

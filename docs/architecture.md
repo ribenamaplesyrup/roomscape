@@ -10,16 +10,18 @@ Roomscape keeps the trusted harness separate from the room-editing workspace:
 - The host app imports the generated room module across an explicit Vite filesystem allow-list, keeping application code and agent-owned code separate while preserving hot reload.
 - Any attempted path escape creates a formal permission request and halts the run.
 
-This mirrors the OpenAI Agents SDK sandbox guidance: keep the harness as the control plane and let the sandbox be the execution plane for files, commands, ports, and generated artifacts.
+This mirrors the Codex integration guidance: keep the trusted host as the control plane and let the sandbox be the execution plane for generated room files.
 
-## First Iteration
+## Agent Runner
 
-The current `DeterministicArchitectRunner` is a local, deterministic runner used for TDD and UI integration. It updates the generated room module and emits logs, cost telemetry, and completion events through the same interface that the live Agents SDK runner will use.
+`CodexSdkArchitectRunner` is the live runner. It uses `@openai/codex-sdk` server-side, starts a Codex thread with `sandbox/rooms/active` as the working directory, passes `workspace-write` sandboxing, disables network access, and does not provide additional writable directories.
+
+The deterministic runner remains available as a test double for fast UI and policy tests.
 
 ## Authentication
 
-Roomscape does not maintain a separate username/password account. The intended primary path is Codex-managed ChatGPT auth, which can expose plan and rate-limit style usage. The current local build keeps API-key auth as a developer fallback; for that path, a local user record is created from a fingerprint of the user's OpenAI credential, while the credential itself is encrypted at rest. After authentication, the user must define an Architect name and description before entering the room.
+Roomscape does not maintain a separate username/password account and does not ask users for API keys. Users authenticate with their ChatGPT account through Codex-managed OAuth. Roomscape stores a local user record keyed by a fingerprint of the Codex ChatGPT account id, then asks the user to define an Architect name and description before entering the room.
 
-## Next Live SDK Step
+## Permission Flow
 
-The next implementation slice should add an `AgentsSdkArchitectRunner` behind the existing `ArchitectRunner` interface using `SandboxAgent`, `Manifest`, `filesystem`, `shell`, and a local or hosted sandbox client. The active room directory should be mounted as the only writable workspace entry, and Roomscape should keep credentials and approval state outside that sandbox.
+The runner preflights explicit outside-sandbox prompts, validates every streamed Codex file-change path, and converts sandbox or approval failures into `permission-request` events for the UI. Roomscape does not silently expand the sandbox.
