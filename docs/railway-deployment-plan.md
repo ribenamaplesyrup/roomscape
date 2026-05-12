@@ -24,26 +24,28 @@ Testable outcomes:
 - Complete: Production build passes.
 - Complete: no generated scene files are modified by checks.
 
-## 3. Deploy Interim Single-Instance Railway App
+## 3. Deploy Interim Single-Instance Railway App - Complete
 
 Use the current Docker/Railway config with volume-backed JSON storage.
 
 Testable outcomes:
 
-- Railway deploy succeeds from `codex/railway-deployment-work`.
-- `/api/health` returns `200`.
-- Landing page loads over the Railway public URL.
-- `ROOMSCAPE_DATA_DIR=/data` points to a mounted Railway volume.
+- Complete: Railway project `roomscape` was created in `Sean Greaves's Projects`.
+- Complete: service `roomscape` was deployed from `codex/railway-deployment-work`.
+- Complete: `/api/health` returns `200` at `https://roomscape-production.up.railway.app/api/health`.
+- Complete: landing page loads over the Railway public URL.
+- Complete: `ROOMSCAPE_DATA_DIR=/data` points to attached volume `roomscape-volume`.
 
-## 4. Verify Current Auth Behavior on Railway
+## 4. Verify Current Auth Behavior on Railway - Complete
 
 Confirm whether Codex local app-server auth works in Railway. This is expected to be unsuitable for public users, but the behavior should be verified explicitly.
 
 Testable outcomes:
 
-- Sign-in either works and creates a session, or fails with a clear error.
-- Unauthenticated users cannot access `/api/rooms`, `/api/active-room`, or `/api/agent/runs`.
-- Result is documented in `docs/railway.md`.
+- Complete: unauthenticated `/api/rooms` returns `401`.
+- Complete: `/api/auth/chatgpt/start` returns an OpenAI auth URL, but the callback points to local Codex (`http://localhost:1455/auth/callback`), so this is not suitable for hosted users.
+- Complete: `/api/auth/chatgpt/existing` returns `202 {"status":"pending"}` on Railway.
+- Complete: result is documented in `docs/railway.md`.
 
 ## 5. Replace Local Codex Auth With Web-Safe Auth
 

@@ -2,6 +2,21 @@
 
 Roomscape can run on Railway as a single Node web service, but the current app is still closer to a local prototype than a fully multi-tenant production service.
 
+## Current Deployment
+
+- Project: `roomscape`
+- Service: `roomscape`
+- Environment: `production`
+- Public URL: `https://roomscape-production.up.railway.app`
+- Deployment ID: `1dcb5e6c-6e73-4967-ab5b-6f24b7de1628`
+- Status: deployed successfully on May 12, 2026.
+
+Smoke checks:
+
+- `GET /api/health`: `200 {"ok":true}`
+- `GET /`: `200 text/html`
+- `GET /api/rooms` without a session: `401 {"error":"Authentication required."}`
+
 ## Service
 
 - Deploy from the repository root.
@@ -28,7 +43,7 @@ The current branch still uses `JsonStore`. For a single instance, mount a Railwa
 ROOMSCAPE_DATA_DIR=/data
 ```
 
-This keeps `.roomscape/data.json`-style app data outside the container filesystem. This is acceptable for a small private deployment, but it is not the final shape for user-isolated hosted Roomscape. Do not attach Railway PostgreSQL yet unless the server has a PostgreSQL `DataStore`; the app intentionally fails when `DATABASE_URL` is present so it does not look multi-tenant while still writing JSON.
+The current Railway service has volume `roomscape-volume` attached to service `roomscape` at `/data`. This keeps `.roomscape/data.json`-style app data outside the container filesystem. This is acceptable for a small private deployment, but it is not the final shape for user-isolated hosted Roomscape. Do not attach Railway PostgreSQL yet unless the server has a PostgreSQL `DataStore`; the app intentionally fails when `DATABASE_URL` is present so it does not look multi-tenant while still writing JSON.
 
 ## User Isolation
 
@@ -57,3 +72,9 @@ Every room/world query should include the authenticated user's id, and every age
 ## ChatGPT Auth Caveat
 
 The current ChatGPT sign-in is mediated through Codex's local app-server bridge. That works for local Codex workflows, but it is not a production web OAuth flow for arbitrary Railway users. Before public deployment, replace it with a web-safe auth provider or an official OpenAI/ChatGPT OAuth mechanism if one is available for this use case.
+
+Observed Railway behavior:
+
+- `POST /api/auth/chatgpt/start` returns an OpenAI auth URL, but the redirect URI is `http://localhost:1455/auth/callback`, which is local to Codex and not usable by hosted users.
+- `POST /api/auth/chatgpt/existing` returns `202 {"status":"pending"}` because Railway has no local Codex ChatGPT account session to reuse.
+- Protected APIs correctly reject unauthenticated requests.
