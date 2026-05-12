@@ -24,7 +24,6 @@ const state: ClientState = {
 };
 
 let renderer: RoomRenderer | null = null;
-let previewRenderer: RoomRenderer | null = null;
 
 void boot();
 
@@ -44,57 +43,21 @@ async function boot() {
 }
 
 function renderLanding() {
-  previewRenderer?.dispose();
   renderer?.dispose();
   app.innerHTML = `
     <main class="landing-shell">
-      <section class="landing-copy">
-        <nav class="landing-nav">
-          <strong>Roomscape</strong>
-          <button id="open-auth" type="button">Start</button>
-        </nav>
-        <div class="landing-title">
-          <p class="eyebrow">Co-created interiors</p>
-          <h1>Roomscape</h1>
-          <p>Walk through an empty room and shape it with an AI Architect that edits the scene around you.</p>
-          <button id="hero-auth" type="button">Connect OpenAI</button>
-        </div>
-      </section>
-      <section class="landing-preview" aria-hidden="true">
-        <div class="landing-vignette"></div>
+      <section class="landing-title">
+        <p class="eyebrow">Co-created interiors</p>
+        <h1>Roomscape</h1>
+        <p>Explore the world while building it.</p>
+        <button id="open-auth" type="button">Log in with OpenAI</button>
       </section>
     </main>
   `;
   document.querySelector<HTMLButtonElement>("#open-auth")!.addEventListener("click", renderOpenAiAuth);
-  document.querySelector<HTMLButtonElement>("#hero-auth")!.addEventListener("click", renderOpenAiAuth);
-  const preview = document.querySelector<HTMLElement>(".landing-preview")!;
-  previewRenderer = new RoomRenderer(preview);
-  previewRenderer.applyConfig({
-    ...state.config,
-    objects: [
-      {
-        id: "landing-table",
-        kind: "table",
-        label: "Signal table",
-        color: "#d6f36f",
-        position: [-1.8, 0.55, -1.8],
-        scale: [1.4, 0.45, 0.85],
-      },
-      {
-        id: "landing-column",
-        kind: "column",
-        label: "Blue column",
-        color: "#4b7bd8",
-        position: [1.7, 1.2, -2.7],
-        scale: [0.5, 2.4, 0.5],
-      },
-    ],
-  });
-  previewRenderer.start();
 }
 
 function renderOpenAiAuth() {
-  previewRenderer?.dispose();
   app.innerHTML = `
     <main class="entry-shell">
       <section class="entry-panel">
@@ -134,7 +97,6 @@ async function submitOpenAiAuth(event: SubmitEvent) {
 }
 
 function renderArchitectSetup() {
-  previewRenderer?.dispose();
   app.innerHTML = `
     <main class="entry-shell architect-entry">
       <section class="entry-panel wide">
@@ -167,7 +129,6 @@ async function submitArchitect(event: SubmitEvent) {
 }
 
 function renderWorkspace() {
-  previewRenderer?.dispose();
   app.innerHTML = `
     <main class="workspace">
       <div id="room-canvas" class="room-canvas"></div>

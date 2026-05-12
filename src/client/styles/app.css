@@ -43,30 +43,19 @@ textarea {
 }
 
 .landing-shell {
-  display: grid;
-  grid-template-columns: minmax(380px, 46vw) 1fr;
   min-height: 100vh;
-  background: #101310;
-}
-
-.landing-copy {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 28px 42px 52px;
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
-  background: #171b16;
-  z-index: 2;
-}
-
-.landing-nav {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  background:
+    linear-gradient(135deg, rgba(214, 243, 111, 0.1), transparent 32%),
+    linear-gradient(315deg, rgba(75, 123, 216, 0.14), transparent 38%),
+    #121611;
 }
 
-.landing-nav button,
 .quiet-button {
   min-height: 36px;
   border-color: rgba(255, 255, 255, 0.22);
@@ -75,9 +64,10 @@ textarea {
 }
 
 .landing-title {
+  width: min(720px, 100%);
   display: grid;
-  gap: 22px;
-  align-content: end;
+  justify-items: center;
+  gap: 24px;
 }
 
 .eyebrow {
@@ -90,7 +80,7 @@ textarea {
 
 h1 {
   margin: 0;
-  max-width: 12ch;
+  max-width: 100%;
   font-size: clamp(3rem, 7vw, 6.8rem);
   line-height: 0.9;
   letter-spacing: 0;
@@ -100,7 +90,7 @@ h1 {
   max-width: 36rem;
   margin: 0;
   color: #c5ccc2;
-  font-size: 1.12rem;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
   line-height: 1.5;
 }
 
@@ -114,22 +104,9 @@ h1 {
   color: #ffb4a6;
 }
 
-.landing-preview,
 .room-canvas {
   min-width: 0;
   min-height: 100vh;
-}
-
-.landing-preview {
-  position: relative;
-}
-
-.landing-vignette {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg, rgba(16, 19, 16, 0.15), rgba(16, 19, 16, 0) 28%, rgba(16, 19, 16, 0.55));
-  z-index: 1;
 }
 
 .entry-shell {
@@ -172,8 +149,7 @@ h1 {
   inset: 0;
 }
 
-.room-canvas canvas,
-.landing-preview canvas {
+.room-canvas canvas {
   display: block;
 }
 
@@ -239,19 +215,6 @@ pre {
 @media (max-width: 760px) {
   body {
     overflow: auto;
-  }
-
-  .landing-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .landing-copy {
-    min-height: 56vh;
-    padding: 24px;
-  }
-
-  .landing-preview {
-    min-height: 44vh;
   }
 
   .overlay {
