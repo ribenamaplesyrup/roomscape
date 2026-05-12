@@ -54,7 +54,10 @@ export class RoomCodeRepository {
 
   /** Removes common model-authored TypeScript annotations that are unsafe in the sandbox contract. */
   public normalizeSceneSource(source: string): string {
-    return source.replace(/:\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*(?:=>|[=,);{]))/g, "");
+    return source
+      .replace(/(\b(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*=)/g, "$1")
+      .replace(/(\)\s*):\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*(?:=>|\{))/g, "$1")
+      .replace(/(function\s+[A-Za-z_$][\w$]*\s*\([^)]*\))\s*:\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*\{)/g, "$1");
   }
 
   /** Reads the editable Three.js scene module as text for Codex context. */
@@ -80,7 +83,7 @@ export class RoomCodeRepository {
     if (/new\s+THREE\.WebGLRenderer|new\s+THREE\.PerspectiveCamera|document\.|window\.|fetch\s*\(|setTimeout\s*\(|setInterval\s*\(|requestAnimationFrame\s*\(/.test(normalizedSource)) {
       errors.push("roomScene.ts must not create renderers/cameras, touch DOM/window, perform network calls, or start timers.");
     }
-    if (/:\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*(?:=>|[=,);{]))/.test(normalizedSource)) {
+    if (/(?:\b(?:const|let|var)\s+[A-Za-z_$][\w$]*|\)\s*|function\s+[A-Za-z_$][\w$]*\s*\([^)]*\))\s*:\s*THREE\./.test(normalizedSource)) {
       errors.push("roomScene.ts must not use THREE.* namespace type annotations; let local Three.js values infer their types.");
     }
     errors.push(...findUnsafeShorthandProperties(normalizedSource));
