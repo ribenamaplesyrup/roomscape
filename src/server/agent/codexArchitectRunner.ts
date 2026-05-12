@@ -221,6 +221,7 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "For animated requests such as flicker, movement, pulsing, blinking, shimmer, or drift, do not use timers or requestAnimationFrame. Instead set scene.userData.isAnimated = true or root.userData.isAnimated = true, then assign scene.userData.update or root.userData.update to a deterministic function that accepts { time, delta, scene, root } and updates the relevant materials/lights. The host will keep rendering while those animation hooks exist.",
     "Do not fake a floor material with a raised slab unless the user asks for a rug or object.",
     "Optimize for real-time browser use: avoid unbounded loops, huge geometries, external assets, and excessive lights.",
+    "Use live PointLight and SpotLight objects sparingly because they directly affect frame rate. Prefer emissive materials, DataTexture glow cues, AmbientLight/HemisphereLight/DirectionalLight, and a few high-impact local lights over many candle/window point lights.",
     "After editing, summarize the Three.js changes you made.",
     "",
     "Current roomScene.ts:",

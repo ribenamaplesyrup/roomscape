@@ -63,6 +63,7 @@ export class RoomRenderer {
     this.resetSceneAnimation();
     disposeObject3D(this.dynamicObjects);
     module.buildRoom({ THREE, root: this.dynamicObjects, scene: this.scene });
+    optimizeGeneratedScenePerformance(this.dynamicObjects);
     this.animatedScene = hasGeneratedAnimation(this.scene, this.dynamicObjects);
     this.refreshColliders();
     this.requestRender();
@@ -383,6 +384,57 @@ export function requestPointerLockSafely(element: HTMLElement): Promise<void> | 
   } catch {
     return undefined;
   }
+}
+
+const generatedPointLightLimit = 12;
+const generatedSpotLightLimit = 4;
+
+export interface GeneratedScenePerformanceStats {
+  pointLightsRemoved: number;
+  spotLightsRemoved: number;
+  shadowCastingLightsDisabled: number;
+}
+
+export function optimizeGeneratedScenePerformance(root: THREE.Object3D): GeneratedScenePerformanceStats {
+  const pointLights: THREE.PointLight[] = [];
+  const spotLights: THREE.SpotLight[] = [];
+  let shadowCastingLightsDisabled = 0;
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Light)) return;
+    if (object.castShadow) {
+      object.castShadow = false;
+      shadowCastingLightsDisabled += 1;
+    }
+    if (object instanceof THREE.PointLight) pointLights.push(object);
+    if (object instanceof THREE.SpotLight) spotLights.push(object);
+  });
+
+  return {
+    pointLightsRemoved: removeWeakestLights(pointLights, generatedPointLightLimit),
+    spotLightsRemoved: removeWeakestLights(spotLights, generatedSpotLightLimit),
+    shadowCastingLightsDisabled,
+  };
+}
+
+function removeWeakestLights<T extends THREE.Light>(lights: T[], limit: number): number {
+  if (lights.length <= limit) return 0;
+  const rankedLights = [...lights].sort((a, b) => lightScore(b) - lightScore(a));
+  const keep = new Set(rankedLights.slice(0, limit));
+  let removed = 0;
+  for (const light of lights) {
+    if (keep.has(light)) continue;
+    light.parent?.remove(light);
+    removed += 1;
+  }
+  return removed;
+}
+
+function lightScore(light: THREE.Light): number {
+  const intensity = Number.isFinite(light.intensity) ? light.intensity : 0;
+  if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+    return intensity * Math.max(1, Math.min(light.distance || 1, 24));
+  }
+  return intensity;
 }
 
 /** Keeps navigation finite without trapping the user inside the starter room. */

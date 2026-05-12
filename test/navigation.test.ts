@@ -5,6 +5,7 @@ import {
   constrainNavigationPosition,
   generatedAnimationHooks,
   hasGeneratedAnimation,
+  optimizeGeneratedScenePerformance,
   positionIntersectsColliders,
   requestPointerLockSafely,
 } from "../src/client/room/RoomRenderer";
@@ -89,5 +90,40 @@ describe("first-person navigation", () => {
 
     await expect(requestPointerLockSafely(rejectedElement)).resolves.toBeUndefined();
     expect(requestPointerLockSafely(throwingElement)).toBeUndefined();
+  });
+
+  it("caps expensive generated lights while preserving the strongest glow sources", () => {
+    const root = new THREE.Group();
+    for (let index = 0; index < 18; index += 1) {
+      const light = new THREE.PointLight(0xffffff, index + 1, index % 2 === 0 ? 6 : 18);
+      light.castShadow = true;
+      light.name = `point-${index}`;
+      root.add(light);
+    }
+    for (let index = 0; index < 7; index += 1) {
+      const light = new THREE.SpotLight(0xffffff, index + 1, 12);
+      light.castShadow = true;
+      light.name = `spot-${index}`;
+      root.add(light);
+    }
+
+    const stats = optimizeGeneratedScenePerformance(root);
+    const remainingPointLights: THREE.PointLight[] = [];
+    const remainingSpotLights: THREE.SpotLight[] = [];
+    root.traverse((object) => {
+      if (object instanceof THREE.PointLight) remainingPointLights.push(object);
+      if (object instanceof THREE.SpotLight) remainingSpotLights.push(object);
+    });
+
+    expect(stats).toEqual({
+      pointLightsRemoved: 6,
+      spotLightsRemoved: 3,
+      shadowCastingLightsDisabled: 25,
+    });
+    expect(remainingPointLights).toHaveLength(12);
+    expect(remainingSpotLights).toHaveLength(4);
+    expect(remainingPointLights.map((light) => light.name)).toContain("point-17");
+    expect(remainingSpotLights.map((light) => light.name)).toContain("spot-6");
+    expect([...remainingPointLights, ...remainingSpotLights].every((light) => !light.castShadow)).toBe(true);
   });
 });
