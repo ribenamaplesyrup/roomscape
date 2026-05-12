@@ -5,6 +5,7 @@ import {
   constrainNavigationPosition,
   generatedAnimationHooks,
   hasGeneratedAnimation,
+  normalizeGeneratedStartPose,
   optimizeGeneratedScenePerformance,
   positionIntersectsColliders,
   requestPointerLockSafely,
@@ -100,6 +101,20 @@ describe("first-person navigation", () => {
     root.userData.update = update;
 
     expect(generatedAnimationHooks(scene, root)).toEqual([update]);
+  });
+
+  it("accepts only finite generated start pose hints", () => {
+    expect(normalizeGeneratedStartPose({
+      position: [2, 1.65, -4],
+      rotation: [0, Math.PI / 2, 0],
+    })).toEqual({
+      position: [2, 1.65, -4],
+      rotation: [0, Math.PI / 2, 0],
+    });
+
+    expect(normalizeGeneratedStartPose({ position: [0, 1.65, Number.NaN] })).toBeNull();
+    expect(normalizeGeneratedStartPose({ position: [0, 1.65] })).toBeNull();
+    expect(normalizeGeneratedStartPose({ position: [0, 1.65, 0], rotation: [0, Infinity, 0] })).toBeNull();
   });
 
   it("ignores pointer lock failures in embedded browsers", async () => {

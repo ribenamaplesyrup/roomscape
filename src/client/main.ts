@@ -478,6 +478,7 @@ async function resetRoom() {
   seenAgentEventKeys.clear();
   closeActiveSources();
   await applyLatestActiveScene();
+  renderer?.resetPose();
   const roomName = document.querySelector<HTMLInputElement>("#room-name");
   if (roomName) roomName.value = result.config.name;
   updateTelemetry();
@@ -495,7 +496,8 @@ async function loadRoomSelection(event: Event) {
   state.config = { ...result.room.config, name: result.room.name };
   pushLog(`Loaded ${result.room.name}.`);
   renderWorkspace();
-  await applyLatestActiveScenePreservingPose();
+  await applyLatestActiveScene();
+  renderer?.resetPose();
 }
 
 function updateTelemetry() {

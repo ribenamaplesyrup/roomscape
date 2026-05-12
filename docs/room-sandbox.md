@@ -30,6 +30,7 @@ Allowed inside `buildRoom`:
 - Pure helper functions and constants local to `roomScene.ts`.
 - Procedural `DataTexture` work.
 - Deterministic animation hooks through `scene.userData` or `root.userData`.
+- An optional host-owned start pose hint through `scene.userData.startPose` or `root.userData.startPose`.
 
 Not allowed:
 
@@ -51,6 +52,19 @@ root.userData.update = ({ time, delta, root }) => {
 ```
 
 The host renderer detects `isAnimated`, `needsContinuousRender`, `update`, or `animate` hooks on `scene.userData` and `root.userData`, then calls the hooks from the existing render loop.
+
+## Start Pose
+
+The host owns the camera, but generated scenes can suggest where saved rooms and resets should start:
+
+```ts
+scene.userData.startPose = {
+  position: [0, 1.65, 0],
+  rotation: [0, -Math.PI / 2, 0],
+};
+```
+
+Use this for larger worlds when the neutral origin would face a wall or miss the main route. The host validates the shape and applies the pose during room load/reset without giving generated code direct camera access.
 
 ## Navigation And Collisions
 

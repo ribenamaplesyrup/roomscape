@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import type { RoomConfig, RoomObject, SurfaceMaterial, SurfaceTexture } from "../../shared/room";
-import type { RoomSceneModule } from "./sceneTypes";
+import type { RoomSceneModule, RoomSceneStartPose } from "./sceneTypes";
 
 export interface CameraPose {
   position: [number, number, number];
   rotation: [number, number, number];
 }
+
+const defaultCameraPosition: [number, number, number] = [0, 1.65, 0];
 
 export class RoomRenderer {
   private readonly scene = new THREE.Scene();
@@ -36,7 +38,7 @@ export class RoomRenderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.mount.append(this.renderer.domElement);
-    this.camera.position.set(0, 1.65, 4.5);
+    this.resetPose();
     this.scene.add(this.dynamicObjects);
     this.bindInput();
     this.resize();
@@ -108,6 +110,20 @@ export class RoomRenderer {
     this.camera.position.fromArray(pose.position);
     this.pitch = pose.rotation[0];
     this.yaw = pose.rotation[1];
+    this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    if (positionIntersectsColliders(this.camera.position, this.colliders)) {
+      this.resetPose();
+      return;
+    }
+    this.requestRender();
+  }
+
+  /** Returns to the generated room's neutral start position. */
+  public resetPose(): void {
+    const startPose = normalizeGeneratedStartPose(this.scene.userData.startPose ?? this.dynamicObjects.userData.startPose);
+    this.camera.position.fromArray(startPose?.position ?? defaultCameraPosition);
+    this.pitch = startPose?.rotation?.[0] ?? 0;
+    this.yaw = startPose?.rotation?.[1] ?? 0;
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     this.requestRender();
   }
@@ -363,6 +379,19 @@ function lightForObject(object: RoomObject): THREE.Object3D {
 
 function isVector3(value: unknown): value is [number, number, number] {
   return Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === "number");
+}
+
+export function normalizeGeneratedStartPose(value: unknown): RoomSceneStartPose | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as { position?: unknown; rotation?: unknown };
+  if (!isVector3(candidate.position)) return null;
+  if (candidate.rotation !== undefined && !isVector3(candidate.rotation)) return null;
+  if (candidate.position.some((entry) => !Number.isFinite(entry))) return null;
+  if (candidate.rotation?.some((entry) => !Number.isFinite(entry))) return null;
+  return {
+    position: candidate.position,
+    ...(candidate.rotation ? { rotation: candidate.rotation } : {}),
+  };
 }
 
 function horizontalCameraForward(camera: THREE.Camera): THREE.Vector3 {
