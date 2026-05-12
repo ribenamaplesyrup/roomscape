@@ -7,6 +7,7 @@ import { freshRoomConfig, type RoomConfig } from "../../shared/room";
 import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
 import { RoomCodeRepository } from "../agent/roomCodeRepository";
+import type { GitHubOAuthProvider } from "../auth/githubOAuth";
 import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/appServerClient";
 import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
@@ -20,6 +21,7 @@ interface AppDeps {
   bus: AgentRunBus;
   roomCode?: RoomCodeRepository;
   codex?: CodexAuthBridge;
+  githubOAuth?: GitHubOAuthProvider;
   vite?: ViteDevServer;
   staticRoot?: string;
 }
@@ -31,7 +33,7 @@ interface UserRunState {
   runIds: Set<string>;
 }
 
-export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoot }: AppDeps) {
+export function createApp({ store, runner, bus, roomCode, codex, githubOAuth, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
   const activeRooms = new ActiveRoomRepository(store);
@@ -80,8 +82,12 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const user = await auth.userForSession(sessionId);
       if (user) cancelUserRuns(user.id, "Signed out; cleared active room edits.");
       await auth.logout(sessionId);
-      clearSessionCookie(res);
+      clearSessionCookie(res, { secure: isSecureRequest(req) });
       sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/auth/providers") {
+      sendJson(res, 200, { chatgpt: Boolean(codex && !githubOAuth), github: Boolean(githubOAuth) });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/session") {
@@ -90,6 +96,27 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     }
     if (req.method === "GET" && url.pathname === "/api/health") {
       sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/auth/github/start") {
+      if (!githubOAuth) throw new HttpError(501, "GitHub auth is not configured.");
+      const redirectUri = `${requestOrigin(req)}/api/auth/github/callback`;
+      const state = await auth.createOAuthState("github", redirectUri);
+      redirect(res, githubOAuth.authorizationUrl(state, redirectUri));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/auth/github/callback") {
+      if (!githubOAuth) throw new HttpError(501, "GitHub auth is not configured.");
+      const code = url.searchParams.get("code")?.trim();
+      const state = url.searchParams.get("state")?.trim();
+      const redirectUri = `${requestOrigin(req)}/api/auth/github/callback`;
+      if (!code || !state) throw new HttpError(400, "GitHub OAuth callback is missing code or state.");
+      const validState = await auth.consumeOAuthState("github", state, redirectUri);
+      if (!validState) throw new HttpError(400, "GitHub OAuth state is invalid or expired.");
+      const profile = await githubOAuth.exchangeCode(code, redirectUri);
+      const result = await auth.authenticateWithOAuthProvider({ provider: "github", ...profile });
+      setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
+      redirect(res, "/");
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/start") {
@@ -108,7 +135,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         return;
       }
       const result = await auth.authenticateWithChatGpt(account);
-      setSessionCookie(res, result.sessionId);
+      setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
@@ -120,7 +147,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         return;
       }
       const result = await auth.authenticateWithChatGpt(account);
-      setSessionCookie(res, result.sessionId);
+      setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
@@ -279,6 +306,26 @@ function requireRoomCode(roomCode: RoomCodeRepository | undefined): RoomCodeRepo
     throw new HttpError(503, "Room code repository is not available.");
   }
   return roomCode;
+}
+
+function redirect(res: ServerResponse, location: string): void {
+  res.statusCode = 302;
+  res.setHeader("Location", location);
+  res.end();
+}
+
+function requestOrigin(req: IncomingMessage): string {
+  const forwardedProto = firstHeaderValue(req.headers["x-forwarded-proto"]);
+  const proto = forwardedProto ?? (isSecureRequest(req) ? "https" : "http");
+  return `${proto}://${req.headers.host ?? "127.0.0.1"}`;
+}
+
+function isSecureRequest(req: IncomingMessage): boolean {
+  return firstHeaderValue(req.headers["x-forwarded-proto"]) === "https";
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 async function mapCodexErrors<T>(work: () => Promise<T>): Promise<T> {

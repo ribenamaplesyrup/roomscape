@@ -47,16 +47,18 @@ Testable outcomes:
 - Complete: `/api/auth/chatgpt/existing` returns `202 {"status":"pending"}` on Railway.
 - Complete: result is documented in `docs/railway.md`.
 
-## 5. Replace Local Codex Auth With Web-Safe Auth
+## 5. Replace Local Codex Auth With Web-Safe Auth - In Progress
 
 Pick and integrate a production auth provider such as Auth.js, Clerk, GitHub OAuth, Google OAuth, or an official OpenAI/ChatGPT OAuth path if available for this use case.
 
 Testable outcomes:
 
-- Users can log in on Railway without local Codex.
-- Session cookie is secure in production.
-- User identity has a stable provider account id.
-- Auth tests cover login, logout, session lookup, and unauthorized API access.
+- Complete: hosted GitHub OAuth start/callback routes are implemented.
+- Complete: the landing page switches to GitHub sign-in when GitHub OAuth env vars are configured.
+- Complete: HTTPS OAuth callbacks set a `Secure` HTTP-only session cookie.
+- Complete: user identity is keyed by a stable fingerprint of the GitHub account id.
+- Complete: auth tests cover provider discovery, callback success, invalid state, session lookup, and existing unauthorized API access.
+- Pending: create a GitHub OAuth app, set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` on Railway, redeploy, and verify login end-to-end.
 
 ## 6. Introduce PostgreSQL Data Store
 

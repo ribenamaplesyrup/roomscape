@@ -37,8 +37,13 @@ function sanitizeData(data: RoomscapeData): RoomscapeData {
       void passwordHash;
       void passwordSalt;
       void username;
-      return safeUser;
+      return {
+        ...safeUser,
+        authMode: safeUser.authMode ?? "chatgpt",
+        accountLabel: safeUser.accountLabel ?? safeUser.openAiAccountLabel ?? "OpenAI account",
+      };
     }),
+    oauthStates: data.oauthStates ?? [],
     rooms: data.rooms.map((room) => ({
       ...room,
       sceneSource: room.sceneSource ?? "",

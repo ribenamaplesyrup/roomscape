@@ -4,11 +4,21 @@ import type { AuthMode } from "../../shared/api";
 export interface UserRecord {
   id: string;
   authMode: AuthMode;
-  openAiAccountHash: string;
-  openAiAccountLabel: string;
+  openAiAccountHash?: string;
+  openAiAccountLabel?: string;
+  authProvider?: AuthMode;
+  authProviderAccountHash?: string;
+  accountLabel?: string;
   planType?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OAuthStateRecord {
+  id: string;
+  provider: AuthMode;
+  redirectUri: string;
+  createdAt: string;
 }
 
 export interface SessionRecord {
@@ -36,6 +46,7 @@ export interface ActiveRoomRecord {
 export interface RoomscapeData {
   users: UserRecord[];
   sessions: SessionRecord[];
+  oauthStates: OAuthStateRecord[];
   rooms: RoomRecord[];
   activeRooms: ActiveRoomRecord[];
 }
@@ -48,6 +59,7 @@ export interface DataStore {
 export const emptyData = (): RoomscapeData => ({
   users: [],
   sessions: [],
+  oauthStates: [],
   rooms: [],
   activeRooms: [],
 });

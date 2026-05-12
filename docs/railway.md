@@ -31,6 +31,8 @@ Smoke checks:
 - `HOST`: optional; defaults to `0.0.0.0`.
 - `ROOMSCAPE_DATA_DIR`: optional directory for the JSON store, for example `/data` when a Railway volume is mounted there.
 - `ROOMSCAPE_DATA_PATH`: optional full path to the JSON store. Takes precedence over `ROOMSCAPE_DATA_DIR`.
+- `GITHUB_CLIENT_ID`: enables hosted GitHub OAuth when paired with `GITHUB_CLIENT_SECRET`.
+- `GITHUB_CLIENT_SECRET`: GitHub OAuth app secret. Store only in Railway variables; do not commit it.
 - `DATABASE_URL`: reserved for the upcoming PostgreSQL-backed store. If this is set today, Roomscape fails on startup instead of silently using local JSON storage.
 
 Use `.env.example` as the local template for the interim volume-backed deployment.
@@ -64,10 +66,10 @@ Every room/world query should include the authenticated user's id, and every age
 
 ## Next Implementation Steps
 
-1. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
-2. Move `activeConfig` out of process memory and into user/world scoped storage.
-3. Replace `sandbox/rooms/active` with temporary per-run workspaces and persisted per-world scene source.
-4. Replace Codex local app-server auth with a web-safe auth provider before public multi-user use.
+1. Create a GitHub OAuth app for the Railway URL and set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` on the `roomscape` service.
+2. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
+3. Move `activeConfig` out of process memory and into user/world scoped storage.
+4. Replace `sandbox/rooms/active` with temporary per-run workspaces and persisted per-world scene source.
 
 ## ChatGPT Auth Caveat
 
@@ -78,3 +80,20 @@ Observed Railway behavior:
 - `POST /api/auth/chatgpt/start` returns an OpenAI auth URL, but the redirect URI is `http://localhost:1455/auth/callback`, which is local to Codex and not usable by hosted users.
 - `POST /api/auth/chatgpt/existing` returns `202 {"status":"pending"}` because Railway has no local Codex ChatGPT account session to reuse.
 - Protected APIs correctly reject unauthenticated requests.
+
+## Hosted GitHub Auth
+
+This branch includes a production-safe GitHub OAuth path:
+
+- `GET /api/auth/providers` tells the frontend whether GitHub or local ChatGPT auth is available.
+- `GET /api/auth/github/start` creates a short-lived state token and redirects to GitHub.
+- `GET /api/auth/github/callback` validates state, exchanges the code, stores a user keyed by a fingerprint of the GitHub account id, sets an HTTP-only session cookie, and redirects back to `/`.
+- HTTPS callbacks set the session cookie with `Secure`.
+
+To activate it on Railway:
+
+1. Create a GitHub OAuth app.
+2. Set Homepage URL to `https://roomscape-production.up.railway.app`.
+3. Set Authorization callback URL to `https://roomscape-production.up.railway.app/api/auth/github/callback`.
+4. Add the OAuth app credentials to Railway as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
+5. Redeploy or restart the `roomscape` service.

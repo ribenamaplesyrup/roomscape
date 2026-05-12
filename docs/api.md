@@ -12,6 +12,22 @@ Returns the current public user or `null`.
 { "user": null }
 ```
 
+### `GET /api/auth/providers`
+
+Returns the auth providers currently available to the frontend.
+
+```json
+{ "chatgpt": false, "github": true }
+```
+
+### `GET /api/auth/github/start`
+
+Starts hosted GitHub OAuth and redirects to GitHub. This route is available when `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are configured.
+
+### `GET /api/auth/github/callback`
+
+Consumes the GitHub OAuth callback, creates a Roomscape session, sets `roomscape_session`, and redirects to `/`.
+
 ### `POST /api/auth/chatgpt/start`
 
 Starts Codex-managed ChatGPT auth.
@@ -39,7 +55,7 @@ Returns either:
 or:
 
 ```json
-{ "status": "authenticated", "user": { "id": "user-id", "authMode": "chatgpt", "openAiAccountLabel": "ChatGPT account" } }
+{ "status": "authenticated", "user": { "id": "user-id", "authMode": "chatgpt", "accountLabel": "ChatGPT account", "openAiAccountLabel": "ChatGPT account" } }
 ```
 
 ### `POST /api/auth/logout`

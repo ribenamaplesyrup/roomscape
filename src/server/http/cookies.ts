@@ -12,10 +12,16 @@ export function readCookie(req: IncomingMessage, name: string): string | undefin
   return undefined;
 }
 
-export function setSessionCookie(res: ServerResponse, sessionId: string): void {
-  res.setHeader("Set-Cookie", `roomscape_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000`);
+interface SessionCookieOptions {
+  secure?: boolean;
 }
 
-export function clearSessionCookie(res: ServerResponse): void {
-  res.setHeader("Set-Cookie", "roomscape_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+export function setSessionCookie(res: ServerResponse, sessionId: string, options: SessionCookieOptions = {}): void {
+  const secure = options.secure ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `roomscape_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`);
+}
+
+export function clearSessionCookie(res: ServerResponse, options: SessionCookieOptions = {}): void {
+  const secure = options.secure ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `roomscape_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
 }
