@@ -118,6 +118,8 @@ function buildArchitectPrompt(input: ArchitectRunInput): string {
     "Do not read, write, create, delete, or request access to files outside the current working directory.",
     "Keep the file as TypeScript that imports RoomConfig and exports a JSON-compatible literal named roomConfig using `satisfies RoomConfig`.",
     "Use only these object kinds: cube, table, sofa, column, light.",
+    "Every object must include all required fields: id, kind, label, color, position, and scale.",
+    "Use stable unique string ids such as carpet-field, carpet-tile-1, table-1, light-1.",
     "After editing, provide a concise summary of what changed.",
     "",
     "Current room config:",

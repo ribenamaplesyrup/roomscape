@@ -58,6 +58,7 @@ describe("Codex SDK architect runner", () => {
     });
     expect(codex.options?.additionalDirectories).toBeUndefined();
     expect(codex.thread.prompt).toContain("Edit only ./roomConfig.ts");
+    expect(codex.thread.prompt).toContain("id, kind, label, color, position, and scale");
     expect(events.some((event) => event.type === "room-updated" && event.config.objects[0]?.label === "green table")).toBe(true);
     expect(events.at(-1)).toMatchObject({ type: "complete" });
   });

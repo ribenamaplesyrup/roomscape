@@ -135,7 +135,10 @@ function renderArchitectSetup() {
   app.innerHTML = `
     <main class="entry-shell architect-entry">
       <section class="entry-panel wide">
-        <p class="eyebrow">${escapeHtml(accountLabel())}</p>
+        <div class="entry-header">
+          <p class="eyebrow">${escapeHtml(accountLabel())}</p>
+          <button id="architect-logout" class="quiet-button" type="button">Sign out</button>
+        </div>
         <h1>Name your Architect.</h1>
         <form id="architect-form" class="auth-form">
           <input name="architectName" placeholder="Architect name, e.g. Gulf Futurist" value="${escapeHtml(state.user?.architectName ?? "")}" required />
@@ -147,6 +150,7 @@ function renderArchitectSetup() {
     </main>
   `;
   document.querySelector<HTMLFormElement>("#architect-form")!.addEventListener("submit", submitArchitect);
+  document.querySelector<HTMLButtonElement>("#architect-logout")!.addEventListener("click", logout);
 }
 
 async function submitArchitect(event: SubmitEvent) {
@@ -170,8 +174,11 @@ function renderWorkspace() {
       <div id="room-canvas" class="room-canvas"></div>
       <aside class="overlay">
         <div class="identity">
-          <span>${escapeHtml(accountLabel())}</span>
-          <strong>${state.user?.architectName ?? ""}</strong>
+          <div>
+            <span>${escapeHtml(accountLabel())}</span>
+            <strong>${state.user?.architectName ?? ""}</strong>
+          </div>
+          <button id="logout" class="quiet-button" type="button">Sign out</button>
         </div>
         <form id="prompt-form" class="prompt-form">
           <select name="model">
@@ -204,6 +211,25 @@ function renderWorkspace() {
   document.querySelector<HTMLFormElement>("#prompt-form")!.addEventListener("submit", submitPrompt);
   document.querySelector<HTMLButtonElement>("#save-room")!.addEventListener("click", saveRoom);
   document.querySelector<HTMLSelectElement>("#room-loader")!.addEventListener("change", loadRoomSelection);
+  document.querySelector<HTMLButtonElement>("#logout")!.addEventListener("click", logout);
+}
+
+async function logout() {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } finally {
+    clearPolling();
+    renderer?.dispose();
+    renderer = null;
+    state.user = null;
+    state.config = roomConfig;
+    state.logs = [];
+    state.totalCost = 0;
+    state.promptRuns = 0;
+    state.chatGptUsage = null;
+    state.rooms = [];
+    renderLanding();
+  }
 }
 
 async function submitPrompt(event: SubmitEvent) {
@@ -220,13 +246,26 @@ async function submitPrompt(event: SubmitEvent) {
 
 function streamRun(runId: string) {
   const source = new EventSource(`/api/agent/runs/${runId}/events`);
-  source.onmessage = (message) => handleAgentEvent(JSON.parse(message.data) as AgentEvent);
+  source.onmessage = (message) => {
+    const event = parseAgentEvent(message);
+    if (event) handleAgentEvent(event);
+  };
   for (const eventName of ["log", "cost", "room-updated", "permission-request", "complete", "error"]) {
     source.addEventListener(eventName, (message) => {
-      const event = JSON.parse((message as MessageEvent).data) as AgentEvent;
+      const event = parseAgentEvent(message as MessageEvent);
+      if (!event) return;
       handleAgentEvent(event);
       if (event.type === "complete" || event.type === "permission-request" || event.type === "error") source.close();
     });
+  }
+}
+
+function parseAgentEvent(message: MessageEvent): AgentEvent | null {
+  if (typeof message.data !== "string" || !message.data) return null;
+  try {
+    return JSON.parse(message.data) as AgentEvent;
+  } catch {
+    return null;
   }
 }
 

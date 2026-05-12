@@ -148,6 +148,13 @@ h1 {
   font-size: clamp(2.6rem, 6vw, 5.4rem);
 }
 
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
 .workspace {
   position: relative;
   min-height: 100vh;
@@ -181,11 +188,16 @@ h1 {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: baseline;
+  align-items: center;
 }
 
 .identity span {
+  display: block;
   color: #bfc9bc;
+}
+
+.identity strong {
+  display: block;
 }
 
 .prompt-form,
