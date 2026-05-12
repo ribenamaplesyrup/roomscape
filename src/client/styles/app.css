@@ -42,22 +42,42 @@ textarea {
   padding: 11px 12px;
 }
 
-.auth-shell {
+.landing-shell {
   display: grid;
-  grid-template-columns: minmax(340px, 440px) 1fr;
+  grid-template-columns: minmax(380px, 46vw) 1fr;
   min-height: 100vh;
-  background: #151713;
+  background: #101310;
 }
 
-.auth-panel {
+.landing-copy {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 18px;
-  padding: 48px;
+  justify-content: space-between;
+  padding: 28px 42px 52px;
   border-right: 1px solid rgba(255, 255, 255, 0.12);
   background: #171b16;
   z-index: 2;
+}
+
+.landing-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.landing-nav button,
+.quiet-button {
+  min-height: 36px;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: #f7f4ee;
+}
+
+.landing-title {
+  display: grid;
+  gap: 22px;
+  align-content: end;
 }
 
 .eyebrow {
@@ -70,10 +90,18 @@ textarea {
 
 h1 {
   margin: 0;
-  max-width: 11ch;
+  max-width: 12ch;
   font-size: clamp(3rem, 7vw, 6.8rem);
   line-height: 0.9;
   letter-spacing: 0;
+}
+
+.landing-title p:not(.eyebrow) {
+  max-width: 36rem;
+  margin: 0;
+  color: #c5ccc2;
+  font-size: 1.12rem;
+  line-height: 1.5;
 }
 
 .auth-form {
@@ -81,20 +109,56 @@ h1 {
   gap: 10px;
 }
 
-.auth-form.compact {
-  padding-top: 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-}
-
 .form-error {
   min-height: 20px;
   color: #ffb4a6;
 }
 
-.preview-room,
+.landing-preview,
 .room-canvas {
   min-width: 0;
   min-height: 100vh;
+}
+
+.landing-preview {
+  position: relative;
+}
+
+.landing-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(16, 19, 16, 0.15), rgba(16, 19, 16, 0) 28%, rgba(16, 19, 16, 0.55));
+  z-index: 1;
+}
+
+.entry-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(214, 243, 111, 0.14), transparent 34%),
+    linear-gradient(315deg, rgba(75, 123, 216, 0.18), transparent 38%),
+    #121611;
+}
+
+.entry-panel {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 22px;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(18, 22, 17, 0.88);
+}
+
+.entry-panel.wide {
+  width: min(620px, 100%);
+}
+
+.entry-panel h1 {
+  font-size: clamp(2.6rem, 6vw, 5.4rem);
 }
 
 .workspace {
@@ -109,7 +173,7 @@ h1 {
 }
 
 .room-canvas canvas,
-.preview-room canvas {
+.landing-preview canvas {
   display: block;
 }
 
@@ -177,17 +241,17 @@ pre {
     overflow: auto;
   }
 
-  .auth-shell {
+  .landing-shell {
     grid-template-columns: 1fr;
   }
 
-  .auth-panel {
-    min-height: 58vh;
-    padding: 28px;
+  .landing-copy {
+    min-height: 56vh;
+    padding: 24px;
   }
 
-  .preview-room {
-    min-height: 42vh;
+  .landing-preview {
+    min-height: 44vh;
   }
 
   .overlay {

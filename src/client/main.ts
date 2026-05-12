@@ -24,6 +24,7 @@ const state: ClientState = {
 };
 
 let renderer: RoomRenderer | null = null;
+let previewRenderer: RoomRenderer | null = null;
 
 void boot();
 
@@ -31,66 +32,149 @@ async function boot() {
   const session = await api<{ user: PublicUser | null }>("/api/session");
   state.user = session.user;
   if (state.user) {
-    await loadRooms();
-    renderWorkspace();
+    if (state.user.isArchitectConfigured) {
+      await loadRooms();
+      renderWorkspace();
+    } else {
+      renderArchitectSetup();
+    }
   } else {
     renderLanding();
   }
 }
 
 function renderLanding() {
+  previewRenderer?.dispose();
+  renderer?.dispose();
   app.innerHTML = `
-    <main class="auth-shell">
-      <section class="auth-panel">
-        <p class="eyebrow">Roomscape</p>
-        <h1>Build the room while you walk through it.</h1>
-        <form id="register-form" class="auth-form">
-          <input name="username" minlength="3" placeholder="Username" autocomplete="username" required />
-          <input name="password" minlength="8" placeholder="Password" type="password" autocomplete="new-password" required />
-          <input name="openAiKey" placeholder="OpenAI API key" type="password" autocomplete="off" required />
-          <input name="architectPersona" placeholder="Architect persona, e.g. Gulf Futurist" required />
-          <button type="submit">Enter Roomscape</button>
-        </form>
-        <form id="login-form" class="auth-form compact">
-          <input name="username" placeholder="Username" autocomplete="username" required />
-          <input name="password" placeholder="Password" type="password" autocomplete="current-password" required />
-          <button type="submit">Log in</button>
-        </form>
-        <p id="auth-error" class="form-error"></p>
+    <main class="landing-shell">
+      <section class="landing-copy">
+        <nav class="landing-nav">
+          <strong>Roomscape</strong>
+          <button id="open-auth" type="button">Start</button>
+        </nav>
+        <div class="landing-title">
+          <p class="eyebrow">Co-created interiors</p>
+          <h1>Roomscape</h1>
+          <p>Walk through an empty room and shape it with an AI Architect that edits the scene around you.</p>
+          <button id="hero-auth" type="button">Connect OpenAI</button>
+        </div>
       </section>
-      <section class="preview-room" aria-hidden="true"></section>
+      <section class="landing-preview" aria-hidden="true">
+        <div class="landing-vignette"></div>
+      </section>
     </main>
   `;
-  document.querySelector<HTMLFormElement>("#register-form")!.addEventListener("submit", (event) => submitAuth(event, "/api/auth/register"));
-  document.querySelector<HTMLFormElement>("#login-form")!.addEventListener("submit", (event) => submitAuth(event, "/api/auth/login"));
-  const preview = document.querySelector<HTMLElement>(".preview-room")!;
-  const previewRenderer = new RoomRenderer(preview);
-  previewRenderer.applyConfig(state.config);
+  document.querySelector<HTMLButtonElement>("#open-auth")!.addEventListener("click", renderOpenAiAuth);
+  document.querySelector<HTMLButtonElement>("#hero-auth")!.addEventListener("click", renderOpenAiAuth);
+  const preview = document.querySelector<HTMLElement>(".landing-preview")!;
+  previewRenderer = new RoomRenderer(preview);
+  previewRenderer.applyConfig({
+    ...state.config,
+    objects: [
+      {
+        id: "landing-table",
+        kind: "table",
+        label: "Signal table",
+        color: "#d6f36f",
+        position: [-1.8, 0.55, -1.8],
+        scale: [1.4, 0.45, 0.85],
+      },
+      {
+        id: "landing-column",
+        kind: "column",
+        label: "Blue column",
+        color: "#4b7bd8",
+        position: [1.7, 1.2, -2.7],
+        scale: [0.5, 2.4, 0.5],
+      },
+    ],
+  });
   previewRenderer.start();
 }
 
-async function submitAuth(event: SubmitEvent, endpoint: string) {
+function renderOpenAiAuth() {
+  previewRenderer?.dispose();
+  app.innerHTML = `
+    <main class="entry-shell">
+      <section class="entry-panel">
+        <button id="back-home" class="quiet-button" type="button">Roomscape</button>
+        <div>
+          <p class="eyebrow">OpenAI authentication</p>
+          <h1>Connect your OpenAI account.</h1>
+        </div>
+        <form id="openai-form" class="auth-form">
+          <input name="openAiKey" placeholder="OpenAI API key" type="password" autocomplete="off" required />
+          <button type="submit">Continue</button>
+        </form>
+        <p id="auth-error" class="form-error"></p>
+      </section>
+    </main>
+  `;
+  document.querySelector<HTMLButtonElement>("#back-home")!.addEventListener("click", renderLanding);
+  document.querySelector<HTMLFormElement>("#openai-form")!.addEventListener("submit", submitOpenAiAuth);
+}
+
+async function submitOpenAiAuth(event: SubmitEvent) {
   event.preventDefault();
   const form = event.currentTarget as HTMLFormElement;
   const body = Object.fromEntries(new FormData(form).entries());
   try {
-    const result = await api<{ user: PublicUser }>(endpoint, { method: "POST", body });
+    const result = await api<{ user: PublicUser }>("/api/auth/openai", { method: "POST", body });
     state.user = result.user;
-    await loadRooms();
-    renderWorkspace();
+    if (result.user.isArchitectConfigured) {
+      await loadRooms();
+      renderWorkspace();
+    } else {
+      renderArchitectSetup();
+    }
   } catch (error) {
     document.querySelector("#auth-error")!.textContent = error instanceof Error ? error.message : "Unable to authenticate.";
   }
 }
 
+function renderArchitectSetup() {
+  previewRenderer?.dispose();
+  app.innerHTML = `
+    <main class="entry-shell architect-entry">
+      <section class="entry-panel wide">
+        <p class="eyebrow">${escapeHtml(state.user?.openAiAccountLabel ?? "OpenAI connected")}</p>
+        <h1>Name your Architect.</h1>
+        <form id="architect-form" class="auth-form">
+          <input name="architectName" placeholder="Architect name, e.g. Gulf Futurist" value="${escapeHtml(state.user?.architectName ?? "")}" required />
+          <textarea name="architectDescription" rows="5" placeholder="Architect description" required>${escapeHtml(state.user?.architectDescription ?? "")}</textarea>
+          <button type="submit">Enter the Room</button>
+        </form>
+        <p id="architect-error" class="form-error"></p>
+      </section>
+    </main>
+  `;
+  document.querySelector<HTMLFormElement>("#architect-form")!.addEventListener("submit", submitArchitect);
+}
+
+async function submitArchitect(event: SubmitEvent) {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const body = Object.fromEntries(new FormData(form).entries());
+  try {
+    const result = await api<{ user: PublicUser }>("/api/architect", { method: "POST", body });
+    state.user = result.user;
+    await loadRooms();
+    renderWorkspace();
+  } catch (error) {
+    document.querySelector("#architect-error")!.textContent = error instanceof Error ? error.message : "Unable to save Architect.";
+  }
+}
+
 function renderWorkspace() {
+  previewRenderer?.dispose();
   app.innerHTML = `
     <main class="workspace">
       <div id="room-canvas" class="room-canvas"></div>
       <aside class="overlay">
         <div class="identity">
-          <span>${state.user?.username ?? ""}</span>
-          <strong>${state.user?.architectPersona ?? ""}</strong>
+          <span>${state.user?.openAiAccountLabel ?? ""}</span>
+          <strong>${state.user?.architectName ?? ""}</strong>
         </div>
         <form id="prompt-form" class="prompt-form">
           <select name="model">

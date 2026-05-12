@@ -2,8 +2,10 @@ import type { RoomConfig } from "./room";
 
 export interface PublicUser {
   id: string;
-  username: string;
-  architectPersona: string;
+  openAiAccountLabel: string;
+  architectName: string;
+  architectDescription: string;
+  isArchitectConfigured: boolean;
 }
 
 export interface SavedRoom {

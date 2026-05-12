@@ -2,12 +2,13 @@ import type { RoomConfig } from "../../shared/room";
 
 export interface UserRecord {
   id: string;
-  username: string;
-  passwordHash: string;
-  passwordSalt: string;
+  openAiAccountHash: string;
+  openAiAccountLabel: string;
   encryptedOpenAiKey: string;
-  architectPersona: string;
+  architectName: string;
+  architectDescription: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface SessionRecord {

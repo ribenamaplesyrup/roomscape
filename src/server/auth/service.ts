@@ -1,70 +1,78 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PublicUser } from "../../shared/api";
-import { encryptSecret, hashPassword, verifyPassword } from "./crypto";
+import { encryptSecret } from "./crypto";
 import type { DataStore, UserRecord } from "../storage/types";
 
-export interface RegisterInput {
-  username: string;
-  password: string;
+export interface OpenAiAuthInput {
   openAiKey: string;
-  architectPersona: string;
 }
 
-export interface LoginInput {
-  username: string;
-  password: string;
+export interface ArchitectProfileInput {
+  architectName: string;
+  architectDescription: string;
 }
 
 export class AuthService {
   public constructor(private readonly store: DataStore) {}
 
-  /** Registers a new Roomscape user and creates a session in one transaction. */
-  public async register(input: RegisterInput): Promise<{ user: PublicUser; sessionId: string }> {
-    const username = input.username.trim();
-    if (username.length < 3) {
-      throw new Error("Username must be at least 3 characters.");
-    }
-    if (input.password.length < 8) {
-      throw new Error("Password must be at least 8 characters.");
-    }
-    if (!input.openAiKey.trim()) {
+  /** Authenticates with an OpenAI credential and creates a local Roomscape session. */
+  public async authenticateWithOpenAi(input: OpenAiAuthInput): Promise<{ user: PublicUser; sessionId: string }> {
+    const openAiKey = input.openAiKey.trim();
+    if (!openAiKey) {
       throw new Error("OpenAI credentials are required.");
     }
 
     const data = await this.store.read();
-    if (data.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) {
-      throw new Error("Username is already registered.");
-    }
-
-    const password = hashPassword(input.password);
+    const openAiAccountHash = fingerprintOpenAiCredential(openAiKey);
     const now = new Date().toISOString();
-    const user: UserRecord = {
-      id: randomUUID(),
-      username,
-      passwordHash: password.hash,
-      passwordSalt: password.salt,
-      encryptedOpenAiKey: encryptSecret(input.openAiKey.trim()),
-      architectPersona: input.architectPersona.trim() || "Careful spatial collaborator",
-      createdAt: now,
-    };
+    let user = data.users.find((candidate) => candidate.openAiAccountHash === openAiAccountHash);
+    if (user) {
+      user.encryptedOpenAiKey = encryptSecret(openAiKey);
+      user.updatedAt = now;
+    } else {
+      user = {
+        id: randomUUID(),
+        openAiAccountHash,
+        openAiAccountLabel: labelOpenAiCredential(openAiKey),
+        encryptedOpenAiKey: encryptSecret(openAiKey),
+        architectName: "",
+        architectDescription: "",
+        createdAt: now,
+        updatedAt: now,
+      };
+      data.users.push(user);
+    }
     const session = { id: randomUUID(), userId: user.id, createdAt: now };
-    data.users.push(user);
     data.sessions.push(session);
     await this.store.write(data);
     return { user: toPublicUser(user), sessionId: session.id };
   }
 
-  /** Authenticates a user with username and password and returns a fresh session. */
-  public async login(input: LoginInput): Promise<{ user: PublicUser; sessionId: string }> {
-    const data = await this.store.read();
-    const user = data.users.find((candidate) => candidate.username.toLowerCase() === input.username.trim().toLowerCase());
-    if (!user || !verifyPassword(input.password, user.passwordSalt, user.passwordHash)) {
-      throw new Error("Invalid username or password.");
+  /** Stores the user's Architect persona after OpenAI authentication succeeds. */
+  public async updateArchitectProfile(sessionId: string | undefined, input: ArchitectProfileInput): Promise<PublicUser> {
+    if (!sessionId) {
+      throw new Error("Authentication required.");
     }
-    const session = { id: randomUUID(), userId: user.id, createdAt: new Date().toISOString() };
-    data.sessions.push(session);
+    const architectName = input.architectName.trim();
+    const architectDescription = input.architectDescription.trim();
+    if (!architectName) {
+      throw new Error("Architect name is required.");
+    }
+    if (!architectDescription) {
+      throw new Error("Architect description is required.");
+    }
+
+    const data = await this.store.read();
+    const session = data.sessions.find((candidate) => candidate.id === sessionId);
+    const user = session ? data.users.find((candidate) => candidate.id === session.userId) : undefined;
+    if (!user) {
+      throw new Error("Authentication required.");
+    }
+    user.architectName = architectName;
+    user.architectDescription = architectDescription;
+    user.updatedAt = new Date().toISOString();
     await this.store.write(data);
-    return { user: toPublicUser(user), sessionId: session.id };
+    return toPublicUser(user);
   }
 
   /** Resolves a session token into a public user profile. */
@@ -86,9 +94,22 @@ export class AuthService {
 }
 
 export function toPublicUser(user: UserRecord): PublicUser {
+  const architectName = user.architectName ?? "";
+  const architectDescription = user.architectDescription ?? "";
   return {
     id: user.id,
-    username: user.username,
-    architectPersona: user.architectPersona,
+    openAiAccountLabel: user.openAiAccountLabel ?? "OpenAI account",
+    architectName,
+    architectDescription,
+    isArchitectConfigured: Boolean(architectName && architectDescription),
   };
+}
+
+function fingerprintOpenAiCredential(openAiKey: string): string {
+  return createHash("sha256").update(openAiKey).digest("hex");
+}
+
+function labelOpenAiCredential(openAiKey: string): string {
+  const visible = openAiKey.slice(-4).padStart(4, "*");
+  return `OpenAI credential ...${visible}`;
 }

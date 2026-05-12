@@ -16,6 +16,10 @@ This mirrors the OpenAI Agents SDK sandbox guidance: keep the harness as the con
 
 The current `DeterministicArchitectRunner` is a local, deterministic runner used for TDD and UI integration. It updates the generated room module and emits logs, cost telemetry, and completion events through the same interface that the live Agents SDK runner will use.
 
+## Authentication
+
+Roomscape does not maintain a separate username/password account. A local user record is created from a fingerprint of the user's OpenAI credential, while the credential itself is encrypted at rest. After authentication, the user must define an Architect name and description before entering the room.
+
 ## Next Live SDK Step
 
 The next implementation slice should add an `AgentsSdkArchitectRunner` behind the existing `ArchitectRunner` interface using `SandboxAgent`, `Manifest`, `filesystem`, `shell`, and a local or hosted sandbox client. The active room directory should be mounted as the only writable workspace entry, and Roomscape should keep credentials and approval state outside that sandbox.

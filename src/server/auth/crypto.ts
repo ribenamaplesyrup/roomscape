@@ -1,20 +1,6 @@
-import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 
-const passwordIterations = 210_000;
 const keyLength = 32;
-
-/** Hashes a password using PBKDF2 so plaintext passwords never touch storage. */
-export function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {
-  const hash = pbkdf2Sync(password, salt, passwordIterations, keyLength, "sha512").toString("hex");
-  return { hash, salt };
-}
-
-/** Verifies a submitted password against a stored PBKDF2 hash in constant time. */
-export function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
-  const actual = Buffer.from(hashPassword(password, salt).hash, "hex");
-  const expected = Buffer.from(expectedHash, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
 
 function secretKey(): Buffer {
   const source = process.env.ROOMSCAPE_SECRET ?? "roomscape-local-development-secret-change-me";

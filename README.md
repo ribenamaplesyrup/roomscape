@@ -5,7 +5,8 @@ Roomscape is a browser-based 3D interior co-creation app. Users enter a bare Thr
 This repository is intentionally small for the first TDD slice:
 
 - Node/Vite/TypeScript full-stack app.
-- Username/password auth with encrypted stored OpenAI credentials.
+- OpenAI-only credential authentication with encrypted stored credentials.
+- Architect setup after authentication with separate name and description fields.
 - File-backed room persistence under `.roomscape/data.json`.
 - Active room code sandbox under `sandbox/rooms/active`.
 - Agent runner boundary that halts and emits a formal permission request when a path leaves the active room sandbox.
@@ -20,6 +21,10 @@ npm run dev
 ```
 
 Then open `http://127.0.0.1:8787`.
+
+## Entry Flow
+
+Roomscape starts on a distinct landing page. The user connects with an OpenAI credential, then defines the Architect with a persona name and a separate description before entering the room.
 
 ## Development Notes
 

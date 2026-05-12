@@ -61,14 +61,8 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
   }
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-    if (req.method === "POST" && url.pathname === "/api/auth/register") {
-      const result = await auth.register(await readJson(req));
-      setSessionCookie(res, result.sessionId);
-      sendJson(res, 201, { user: result.user });
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/auth/login") {
-      const result = await auth.login(await readJson(req));
+    if (req.method === "POST" && url.pathname === "/api/auth/openai") {
+      const result = await auth.authenticateWithOpenAi(await readJson(req));
       setSessionCookie(res, result.sessionId);
       sendJson(res, 200, { user: result.user });
       return;
@@ -85,6 +79,10 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
     }
 
     const user = await requireUser(req);
+    if (req.method === "POST" && url.pathname === "/api/architect") {
+      sendJson(res, 200, { user: await auth.updateArchitectProfile(readCookie(req, "roomscape_session"), await readJson(req)) });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/rooms") {
       sendJson(res, 200, { rooms: await rooms.listForUser(user.id) });
       return;
@@ -115,7 +113,7 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
           runId,
           prompt: body.prompt,
           model: body.model,
-          persona: user.architectPersona,
+          persona: `${user.architectName}: ${user.architectDescription}`,
           currentConfig,
         },
         (event) => {
