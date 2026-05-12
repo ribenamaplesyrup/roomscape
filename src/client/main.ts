@@ -45,6 +45,7 @@ let chatGptAuthWindow: WindowProxy | null = null;
 let activeRunStartedAt: number | null = initialStoredSession.activeRunStartedAt;
 let activeRunLastEventAt: number | null = initialStoredSession.activeRunLastEventAt;
 let activeRunModel: string | null = initialStoredSession.activeRunModel;
+const seenAgentEventKeys = new Set(initialStoredSession.seenAgentEventKeys);
 
 window.addEventListener("beforeunload", persistSessionState);
 
@@ -263,6 +264,7 @@ async function logout() {
     state.activeRunIds = [];
     state.isWorking = false;
     clearActiveRunStatus();
+    seenAgentEventKeys.clear();
     closeActiveSources();
     clearStoredSession();
     renderLanding();
@@ -395,6 +397,7 @@ function parseAgentEvent(message: MessageEvent): AgentEvent | null {
 }
 
 function handleAgentEvent(event: AgentEvent, runId?: string) {
+  if (rememberAgentEvent(event, runId)) return;
   activeRunLastEventAt = Date.now();
   if (event.type === "log") pushLog(event.message);
   if (event.type === "cost") state.totalCost += event.usd;
@@ -420,6 +423,18 @@ function handleAgentEvent(event: AgentEvent, runId?: string) {
   persistSessionState();
 }
 
+function rememberAgentEvent(event: AgentEvent, runId?: string): boolean {
+  const key = `${runId ?? "run"}:${event.type}:${event.at}:${JSON.stringify(event)}`;
+  if (seenAgentEventKeys.has(key)) return true;
+  seenAgentEventKeys.add(key);
+  while (seenAgentEventKeys.size > 300) {
+    const first = seenAgentEventKeys.values().next().value;
+    if (!first) break;
+    seenAgentEventKeys.delete(first);
+  }
+  return false;
+}
+
 async function saveRoom() {
   const name = document.querySelector<HTMLInputElement>("#room-name")!.value;
   await api("/api/rooms", { method: "POST", body: { name } });
@@ -435,6 +450,7 @@ async function resetRoom() {
   state.activeRunIds = [];
   state.isWorking = false;
   clearActiveRunStatus();
+  seenAgentEventKeys.clear();
   closeActiveSources();
   renderer?.applyScene(activeRoomScene);
   const roomName = document.querySelector<HTMLInputElement>("#room-name");
@@ -621,6 +637,7 @@ interface StoredSession {
   activeRunStartedAt: number | null;
   activeRunLastEventAt: number | null;
   activeRunModel: string | null;
+  seenAgentEventKeys: string[];
   pose: CameraPose | null;
 }
 
@@ -641,6 +658,9 @@ function loadStoredSession(): StoredSession {
       activeRunStartedAt: typeof parsed.activeRunStartedAt === "number" ? parsed.activeRunStartedAt : null,
       activeRunLastEventAt: typeof parsed.activeRunLastEventAt === "number" ? parsed.activeRunLastEventAt : null,
       activeRunModel: typeof parsed.activeRunModel === "string" ? parsed.activeRunModel : null,
+      seenAgentEventKeys: Array.isArray(parsed.seenAgentEventKeys)
+        ? parsed.seenAgentEventKeys.filter((entry): entry is string => typeof entry === "string")
+        : [],
       pose: isCameraPose(parsed.pose) ? parsed.pose : null,
     };
   } catch {
@@ -658,6 +678,7 @@ function persistSessionState(): void {
       activeRunStartedAt,
       activeRunLastEventAt,
       activeRunModel,
+      seenAgentEventKeys: [...seenAgentEventKeys],
       pose: renderer?.pose() ?? loadStoredSession().pose,
     };
     sessionStorage.setItem(sessionStateKey, JSON.stringify(payload));
@@ -679,6 +700,7 @@ function emptyStoredSession(): StoredSession {
     activeRunStartedAt: null,
     activeRunLastEventAt: null,
     activeRunModel: null,
+    seenAgentEventKeys: [],
     pose: null,
   };
 }
