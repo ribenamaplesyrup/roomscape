@@ -38,8 +38,12 @@ let renderer: RoomRenderer | null = null;
 let chatGptPoll: number | undefined;
 let usagePoll: number | undefined;
 let posePoll: number | undefined;
+let activityPoll: number | undefined;
 const activeSources = new Map<string, EventSource>();
 let chatGptAuthWindow: WindowProxy | null = null;
+let activeRunStartedAt: number | null = null;
+let activeRunLastEventAt: number | null = null;
+let activeRunModel: string | null = null;
 
 window.addEventListener("beforeunload", persistSessionState);
 
@@ -66,18 +70,14 @@ function renderLanding() {
     <main class="landing-shell">
       <div class="landing-door-scene" aria-hidden="true">
         <div class="door-glow"></div>
-        <div class="door-light door-light-left"></div>
-        <div class="door-light door-light-right"></div>
         <div class="floor-light"></div>
         <div class="door-frame">
-          <span class="door-crack"></span>
           <span class="door-knob"></span>
         </div>
       </div>
       <section class="landing-title" aria-labelledby="landing-heading">
-        <p class="landing-kicker">AI interior co-creation</p>
         <h1 id="landing-heading">Roomscape</h1>
-        <p class="tagline">Step into a room that listens, shifts, and becomes more vivid with every idea.</p>
+        <p class="tagline">Exploring the world while building it.</p>
         <button id="chatgpt-login" type="button">Sign in with ChatGPT</button>
         <p id="auth-error" class="form-error" hidden></p>
       </section>
@@ -91,8 +91,17 @@ async function startChatGptAuth() {
   const errorTarget = document.querySelector<HTMLElement>("#auth-error")!;
   chatGptAuthWindow = window.open("about:blank", "roomscape-chatgpt-login", "popup,width=520,height=720");
   if (!chatGptAuthWindow) {
-    errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
-    errorTarget.hidden = false;
+    button.disabled = true;
+    button.textContent = "Checking ChatGPT...";
+    errorTarget.textContent = "";
+    errorTarget.hidden = true;
+    const authenticated = await authenticateExistingChatGptSession();
+    if (!authenticated) {
+      button.disabled = false;
+      button.textContent = "Sign in with ChatGPT";
+      errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
+      errorTarget.hidden = false;
+    }
     return;
   }
   clearPolling();
@@ -111,6 +120,22 @@ async function startChatGptAuth() {
     button.textContent = "Sign in with ChatGPT";
     errorTarget.textContent = error instanceof Error ? error.message : "Unable to start ChatGPT login.";
     errorTarget.hidden = false;
+  }
+}
+
+async function authenticateExistingChatGptSession(): Promise<boolean> {
+  try {
+    const result = await api<ChatGptAuthStatus>("/api/auth/chatgpt/existing", { method: "POST" });
+    if (result.status !== "authenticated" || !result.user) return false;
+    clearPolling();
+    chatGptAuthWindow?.close();
+    chatGptAuthWindow = null;
+    state.user = result.user;
+    await loadRooms();
+    renderWorkspace();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -290,6 +315,9 @@ async function submitPrompt(event: SubmitEvent) {
   const prompt = String(values.prompt ?? "").trim();
   if (!prompt) return;
   state.isWorking = true;
+  activeRunStartedAt = Date.now();
+  activeRunLastEventAt = activeRunStartedAt;
+  activeRunModel = String(values.model ?? "");
   persistSessionState();
   updateTelemetry();
   try {
@@ -300,9 +328,11 @@ async function submitPrompt(event: SubmitEvent) {
     state.activeRunIds = [...state.activeRunIds, result.runId];
     persistSessionState();
     streamRun(result.runId);
-    form.reset();
+    const promptInput = form.querySelector<HTMLTextAreaElement>("#prompt-input");
+    if (promptInput) promptInput.value = "";
   } catch (error) {
     state.isWorking = false;
+    clearActiveRunStatus();
     state.logs.push(`ERROR: ${error instanceof Error ? error.message : "Unable to start room edit."}`);
   } finally {
     updateTelemetry();
@@ -320,6 +350,7 @@ async function cancelRoomEdit() {
     closeActiveSources();
     state.activeRunIds = [];
     state.isWorking = false;
+    clearActiveRunStatus();
     state.logs.push("Room edit cancelled.");
     updateTelemetry();
     persistSessionState();
@@ -344,6 +375,7 @@ function streamRun(runId: string) {
         activeSources.delete(runId);
         state.activeRunIds = state.activeRunIds.filter((id) => id !== runId);
         state.isWorking = activeSources.size > 0 || state.activeRunIds.length > 0;
+        if (!state.isWorking) clearActiveRunStatus();
         updateTelemetry();
         persistSessionState();
       }
@@ -361,6 +393,7 @@ function parseAgentEvent(message: MessageEvent): AgentEvent | null {
 }
 
 function handleAgentEvent(event: AgentEvent, runId?: string) {
+  activeRunLastEventAt = Date.now();
   if (event.type === "log") state.logs.push(event.message);
   if (event.type === "cost") state.totalCost += event.usd;
   if (event.type === "permission-request") state.logs.push(`PERMISSION REQUIRED: ${event.request.reason} -> ${event.request.requestedPath}`);
@@ -493,8 +526,10 @@ function formatChatGptUsage(usage: ChatGptUsage): string {
 function clearPolling() {
   if (chatGptPoll) window.clearInterval(chatGptPoll);
   if (usagePoll) window.clearInterval(usagePoll);
+  if (activityPoll) window.clearInterval(activityPoll);
   chatGptPoll = undefined;
   usagePoll = undefined;
+  activityPoll = undefined;
 }
 
 function reconnectActiveRun(): void {

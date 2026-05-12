@@ -24,6 +24,11 @@ class FakeCodexBridge implements CodexAuthBridge {
     return this.completedLoginIds.has(loginId) ? this.account : null;
   }
 
+  /** Reads the account already known to the fake Codex app-server. */
+  public async readChatGptAccount(): Promise<CodexChatGptAccount | null> {
+    return this.account;
+  }
+
   /** Returns a stable usage bucket shaped like the Codex app-server response. */
   public async readRateLimits(): Promise<CodexRateLimitsResult> {
     return {
@@ -44,6 +49,28 @@ const noopRunner: ArchitectRunner = {
 };
 
 describe("ChatGPT auth HTTP flow", () => {
+  it("creates a session from an existing Codex ChatGPT account when popups are unavailable", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-existing-"));
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+
+    const pending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    expect(pending.status).toBe(202);
+    expect(pending.body.status).toBe("pending");
+
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
+    const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/existing");
+    expect(completed.body.status).toBe("authenticated");
+    expect(completed.body.user.authMode).toBe("chatgpt");
+    expect(completed.headers["set-cookie"]).toContain("roomscape_session=");
+  });
+
   it("starts Codex ChatGPT login, creates a session after completion, and exposes usage", async () => {
     const codex = new FakeCodexBridge();
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-"));

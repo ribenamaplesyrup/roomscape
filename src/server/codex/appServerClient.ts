@@ -46,6 +46,7 @@ interface LoginCompletedNotification {
 export interface CodexAuthBridge {
   startChatGptLogin(): Promise<ChatGptLoginStart>;
   completeChatGptLogin(loginId: string): Promise<CodexChatGptAccount | null>;
+  readChatGptAccount(): Promise<CodexChatGptAccount | null>;
   readRateLimits(): Promise<CodexRateLimitsResult>;
 }
 

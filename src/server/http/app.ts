@@ -100,6 +100,18 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/existing") {
+      const bridge = requireCodexBridge(codex);
+      const account = await mapCodexErrors(() => bridge.readChatGptAccount());
+      if (!account) {
+        sendJson(res, 202, { status: "pending" });
+        return;
+      }
+      const result = await auth.authenticateWithChatGpt(account);
+      setSessionCookie(res, result.sessionId);
+      sendJson(res, 200, { status: "authenticated", user: result.user });
+      return;
+    }
 
     const user = await requireUser(req);
     if (req.method === "GET" && url.pathname === "/api/usage") {
