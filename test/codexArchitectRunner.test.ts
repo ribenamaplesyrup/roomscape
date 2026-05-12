@@ -97,6 +97,8 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
     expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
     expect(codex.thread.prompt).toContain("For targeted requests");
+    expect(codex.thread.prompt).toContain("Ceiling height, room height");
+    expect(codex.thread.prompt).toContain("rendered room remains continuous with no gaps");
     expect(codex.thread.prompt).not.toContain("Gulf Futurist");
     expect(codex.thread.prompt).not.toContain("Atmosphere and texture are primary");
     expect(events.some((event) => event.type === "scene-updated")).toBe(true);
@@ -385,6 +387,43 @@ describe("Codex SDK architect runner", () => {
     expect(promoted).toContain('new THREE.HemisphereLight("#ffffff"');
   });
 
+  it("allows ceiling height changes to update continuous wall geometry", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(
+      path.join(root, "roomScene.ts"),
+      highCeilingSceneSource({
+        title: "Original room",
+        background: "#ffffff",
+        floor: "#8a8479",
+        wall: "#d7d2c8",
+        ceiling: "#f1eee8",
+        light: "#ffffff",
+      }),
+      "utf8",
+    ));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Double the ceiling height", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain("ceiling.position.y = 6");
+    expect(promoted).toContain("new THREE.PlaneGeometry(10, 6)");
+    expect(promoted).toContain("[0, 3, -5, 0]");
+  });
+
   it("does not promote scene code with unstable Three.js namespace type annotations", async () => {
     const root = await mkRoomRoot();
     await writeFile(path.join(root, "activeRoomScene.ts"), "export const roomTitle = 'Still valid';\n", "utf8");
@@ -646,6 +685,16 @@ function doorwaySceneSource(options: { title: string; background: string; floor:
     )
     .replace("    [0, 1.5, -5, 0],\n", "");
   return source;
+}
+
+function highCeilingSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  return targetedSceneSource(options)
+    .replace("  ceiling.position.y = 3;", "  ceiling.position.y = 6;")
+    .replace("  const wallGeometry = new THREE.PlaneGeometry(10, 3);", "  const wallGeometry = new THREE.PlaneGeometry(10, 6);")
+    .replace("    [0, 1.5, -5, 0],", "    [0, 3, -5, 0],")
+    .replace("    [0, 1.5, 5, Math.PI],", "    [0, 3, 5, Math.PI],")
+    .replace("    [-5, 1.5, 0, Math.PI / 2],", "    [-5, 3, 0, Math.PI / 2],")
+    .replace("    [5, 1.5, 0, -Math.PI / 2],", "    [5, 3, 0, -Math.PI / 2],");
 }
 
 function fileChange(filePath: string): ThreadEvent {
