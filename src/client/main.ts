@@ -64,9 +64,20 @@ function renderLanding() {
   renderer?.dispose();
   app.innerHTML = `
     <main class="landing-shell">
-      <section class="landing-title">
-        <h1>Roomscape</h1>
-        <p class="tagline">Explore the world while building it.</p>
+      <div class="landing-door-scene" aria-hidden="true">
+        <div class="door-glow"></div>
+        <div class="door-light door-light-left"></div>
+        <div class="door-light door-light-right"></div>
+        <div class="floor-light"></div>
+        <div class="door-frame">
+          <span class="door-crack"></span>
+          <span class="door-knob"></span>
+        </div>
+      </div>
+      <section class="landing-title" aria-labelledby="landing-heading">
+        <p class="landing-kicker">AI interior co-creation</p>
+        <h1 id="landing-heading">Roomscape</h1>
+        <p class="tagline">Step into a room that listens, shifts, and becomes more vivid with every idea.</p>
         <button id="chatgpt-login" type="button">Sign in with ChatGPT</button>
         <p id="auth-error" class="form-error" hidden></p>
       </section>
@@ -171,9 +182,8 @@ function renderWorkspace() {
           <div class="usage-row">
             <span>Session usage</span>
             <strong id="usage">${escapeHtml(sessionUsageLabel())}</strong>
-            <span id="working-indicator" class="working-indicator" ${state.isWorking ? "" : "hidden"}><span></span>Working</span>
           </div>
-          <pre id="logs">${state.logs.map(escapeHtml).join("\n")}</pre>
+          <div id="logs" class="log-panel" role="log" aria-live="polite">${renderLogContent()}</div>
         </div>
       </aside>
     </main>
@@ -412,10 +422,22 @@ async function loadRoomSelection(event: Event) {
 
 function updateTelemetry() {
   document.querySelector("#usage")!.textContent = sessionUsageLabel();
-  document.querySelector("#logs")!.textContent = state.logs.join("\n");
-  const working = document.querySelector<HTMLElement>("#working-indicator");
-  if (working) working.hidden = !state.isWorking;
+  const logs = document.querySelector<HTMLElement>("#logs");
+  if (logs) {
+    logs.innerHTML = renderLogContent();
+    logs.scrollTop = logs.scrollHeight;
+  }
   updatePromptControls();
+}
+
+function renderLogContent(): string {
+  const entries = state.logs.length > 0
+    ? state.logs.map((entry) => `<div class="log-line">${escapeHtml(entry)}</div>`).join("")
+    : '<div class="log-line log-muted">No room edits yet.</div>';
+  const activity = state.isWorking
+    ? '<div class="log-line log-activity"><span class="log-spinner" aria-hidden="true"></span><span>Processing edit<span class="log-ellipsis" aria-hidden="true"></span></span></div>'
+    : "";
+  return entries + activity;
 }
 
 function updatePromptControls() {
