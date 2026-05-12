@@ -82,7 +82,13 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("helper functions called by buildRoom");
     expect(codex.thread.prompt).toContain("maximize visual quality");
     expect(codex.thread.prompt).toContain("does not mean simple, sparse, flat, boxy");
+    expect(codex.thread.prompt).toContain("Judge every request by rendered browser appearance");
+    expect(codex.thread.prompt).toContain("The user sees pixels, not source code");
+    expect(codex.thread.prompt).toContain("Color, texture, atmosphere, scale, object quality, and layout requests");
     expect(codex.thread.prompt).toContain("procedural texture detail");
+    expect(codex.thread.prompt).toContain("rendered appearance");
+    expect(codex.thread.prompt).toContain("surface normals");
+    expect(codex.thread.prompt).toContain("ceilings and other undersides");
     expect(codex.thread.prompt).toContain("avoid blocky or cartoonish");
     expect(codex.thread.prompt).toContain("recognizable object anatomy");
     expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
