@@ -33,7 +33,8 @@ export class RoomRenderer {
     this.dynamicObjects.clear();
     this.buildShell(config);
     for (const object of config.objects) {
-      this.dynamicObjects.add(meshForObject(object));
+      const mesh = meshForObject(object);
+      if (mesh) this.dynamicObjects.add(mesh);
     }
   }
 
@@ -145,7 +146,8 @@ export class RoomRenderer {
   }
 }
 
-function meshForObject(object: RoomObject): THREE.Object3D {
+function meshForObject(object: RoomObject): THREE.Object3D | null {
+  if (!isVector3(object.position) || !isVector3(object.scale)) return null;
   const material = new THREE.MeshStandardMaterial({ color: object.color, roughness: 0.58, metalness: object.kind === "light" ? 0.15 : 0 });
   const geometry = object.kind === "light" ? new THREE.SphereGeometry(0.4, 32, 16) : new THREE.BoxGeometry(1, 1, 1);
   const mesh = new THREE.Mesh(geometry, material);
@@ -153,5 +155,19 @@ function meshForObject(object: RoomObject): THREE.Object3D {
   mesh.scale.fromArray(object.scale);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  if (object.kind === "light") {
+    const group = new THREE.Group();
+    const light = new THREE.PointLight(object.color, object.intensity ?? 0.85, 5);
+    light.position.copy(mesh.position);
+    mesh.position.set(0, 0, 0);
+    group.position.copy(light.position);
+    light.position.set(0, 0, 0);
+    group.add(light, mesh);
+    return group;
+  }
   return mesh;
+}
+
+function isVector3(value: unknown): value is [number, number, number] {
+  return Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === "number");
 }

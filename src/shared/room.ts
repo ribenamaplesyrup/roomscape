@@ -7,6 +7,7 @@ export interface RoomObject {
   color: string;
   position: [number, number, number];
   scale: [number, number, number];
+  intensity?: number;
 }
 
 export interface RoomConfig {

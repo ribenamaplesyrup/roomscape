@@ -96,7 +96,8 @@ function isRoomObject(value: unknown): value is RoomObject {
     && typeof object.label === "string"
     && typeof object.color === "string"
     && isVector3(object.position)
-    && isVector3(object.scale);
+    && isVector3(object.scale)
+    && (object.intensity === undefined || typeof object.intensity === "number");
 }
 
 function isRoomObjectKind(value: unknown): value is RoomObjectKind {
