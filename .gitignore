@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.roomscape/
+.DS_Store
+*.log
