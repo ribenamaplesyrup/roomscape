@@ -91,6 +91,9 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("ceilings and other undersides");
     expect(codex.thread.prompt).toContain("avoid blocky or cartoonish");
     expect(codex.thread.prompt).toContain("recognizable object anatomy");
+    expect(codex.thread.prompt).toContain("For animated requests");
+    expect(codex.thread.prompt).toContain("scene.userData.update or root.userData.update");
+    expect(codex.thread.prompt).toContain("The host will keep rendering while those animation hooks exist");
     expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
     expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
     expect(codex.thread.prompt).toContain("For targeted requests");

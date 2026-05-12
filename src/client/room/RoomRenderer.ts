@@ -15,6 +15,7 @@ export class RoomRenderer {
   private readonly dynamicObjects = new THREE.Group();
   private readonly navigationHalfExtent = 48;
   private readonly collisionRadius = 0.28;
+  private readonly idleAnimationFrameMs = 1000 / 30;
   private readonly colliders: THREE.Box3[] = [];
   private readonly onResize = () => this.resize();
   private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
@@ -23,8 +24,10 @@ export class RoomRenderer {
   private yaw = 0;
   private pitch = 0;
   private frame = 0;
+  private lastFrameTime = 0;
   private renderRequested = false;
   private running = false;
+  private animatedScene = false;
 
   public constructor(private readonly mount: HTMLElement) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
@@ -41,6 +44,7 @@ export class RoomRenderer {
 
   /** Applies a new generated room config without replacing the camera or controls. */
   public applyConfig(config: RoomConfig): void {
+    this.resetSceneAnimation();
     this.scene.background = new THREE.Color(config.palette.ceiling);
     this.scene.fog = config.objects.length > 0 ? new THREE.Fog(config.palette.ceiling, 9, 20) : null;
     disposeObject3D(this.dynamicObjects);
@@ -55,8 +59,10 @@ export class RoomRenderer {
 
   /** Applies sandbox-authored Three.js scene code without replacing camera or controls. */
   public applyScene(module: RoomSceneModule): void {
+    this.resetSceneAnimation();
     disposeObject3D(this.dynamicObjects);
     module.buildRoom({ THREE, root: this.dynamicObjects, scene: this.scene });
+    this.animatedScene = hasGeneratedAnimation(this.scene, this.dynamicObjects);
     this.refreshColliders();
     this.requestRender();
   }
@@ -71,11 +77,19 @@ export class RoomRenderer {
   private requestRender(): void {
     if (this.renderRequested || !this.running) return;
     this.renderRequested = true;
-    this.frame = requestAnimationFrame(() => {
+    this.frame = requestAnimationFrame((time) => {
       this.renderRequested = false;
+      const hasMovement = this.hasMovementInput();
+      if (this.shouldThrottleAnimatedFrame(time, hasMovement)) {
+        this.requestRender();
+        return;
+      }
+      const delta = this.lastFrameTime === 0 ? 0 : (time - this.lastFrameTime) / 1000;
+      this.lastFrameTime = time;
       this.moveCamera();
+      this.updateGeneratedAnimation(time / 1000, delta);
       this.renderer.render(this.scene, this.camera);
-      if (this.hasMovementInput()) this.requestRender();
+      if (hasMovement || this.animatedScene) this.requestRender();
     });
   }
 
@@ -224,6 +238,30 @@ export class RoomRenderer {
 
   private refreshColliders(): void {
     this.colliders.splice(0, this.colliders.length, ...collectNavigationColliders(this.dynamicObjects, this.camera.position.y, this.collisionRadius));
+  }
+
+  private resetSceneAnimation(): void {
+    this.animatedScene = false;
+    this.lastFrameTime = 0;
+    this.scene.onBeforeRender = () => undefined;
+    for (const key of ["animate", "update", "isAnimated", "needsContinuousRender"]) {
+      delete this.scene.userData[key];
+      delete this.dynamicObjects.userData[key];
+    }
+  }
+
+  private updateGeneratedAnimation(time: number, delta: number): void {
+    if (!this.animatedScene) return;
+    for (const hook of generatedAnimationHooks(this.scene, this.dynamicObjects)) {
+      hook({ time, delta, scene: this.scene, root: this.dynamicObjects });
+    }
+  }
+
+  private shouldThrottleAnimatedFrame(time: number, hasMovement: boolean): boolean {
+    return this.animatedScene
+      && !hasMovement
+      && this.lastFrameTime > 0
+      && time - this.lastFrameTime < this.idleAnimationFrameMs;
   }
 
   private resize(): void {
@@ -375,6 +413,41 @@ export function positionIntersectsColliders(position: THREE.Vector3, colliders: 
     && position.x <= collider.max.x
     && position.z >= collider.min.z
     && position.z <= collider.max.z);
+}
+
+interface GeneratedAnimationFrame {
+  time: number;
+  delta: number;
+  scene: THREE.Scene;
+  root: THREE.Group;
+}
+
+type GeneratedAnimationHook = (frame: GeneratedAnimationFrame) => void;
+
+export function hasGeneratedAnimation(scene: THREE.Scene, root: THREE.Group): boolean {
+  return Boolean(
+    scene.userData.isAnimated
+      || scene.userData.needsContinuousRender
+      || root.userData.isAnimated
+      || root.userData.needsContinuousRender
+      || isGeneratedAnimationHook(scene.userData.animate)
+      || isGeneratedAnimationHook(scene.userData.update)
+      || isGeneratedAnimationHook(root.userData.animate)
+      || isGeneratedAnimationHook(root.userData.update),
+  );
+}
+
+export function generatedAnimationHooks(scene: THREE.Scene, root: THREE.Group): GeneratedAnimationHook[] {
+  return [...new Set([
+    scene.userData.update,
+    scene.userData.animate,
+    root.userData.update,
+    root.userData.animate,
+  ])].filter(isGeneratedAnimationHook);
+}
+
+function isGeneratedAnimationHook(value: unknown): value is GeneratedAnimationHook {
+  return typeof value === "function";
 }
 
 function plainMaterial(color: string): THREE.MeshStandardMaterial {

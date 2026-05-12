@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { collectNavigationColliders, constrainNavigationPosition, positionIntersectsColliders } from "../src/client/room/RoomRenderer";
+import {
+  collectNavigationColliders,
+  constrainNavigationPosition,
+  generatedAnimationHooks,
+  hasGeneratedAnimation,
+  positionIntersectsColliders,
+} from "../src/client/room/RoomRenderer";
 
 describe("first-person navigation", () => {
   it("does not trap the camera at the original room walls", () => {
@@ -44,5 +50,29 @@ describe("first-person navigation", () => {
     const colliders = collectNavigationColliders(root);
 
     expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, -2), colliders)).toBe(false);
+  });
+
+  it("detects generated animation hooks only when the scene asks for continuous rendering", () => {
+    const scene = new THREE.Scene();
+    const root = new THREE.Group();
+
+    expect(hasGeneratedAnimation(scene, root)).toBe(false);
+
+    root.userData.isAnimated = true;
+    root.userData.update = () => undefined;
+
+    expect(hasGeneratedAnimation(scene, root)).toBe(true);
+    expect(generatedAnimationHooks(scene, root)).toHaveLength(1);
+  });
+
+  it("deduplicates generated animation hooks shared across scene and root", () => {
+    const scene = new THREE.Scene();
+    const root = new THREE.Group();
+    const update = () => undefined;
+    scene.userData.update = update;
+    scene.userData.animate = update;
+    root.userData.update = update;
+
+    expect(generatedAnimationHooks(scene, root)).toEqual([update]);
   });
 });
