@@ -18,7 +18,7 @@ The current `DeterministicArchitectRunner` is a local, deterministic runner used
 
 ## Authentication
 
-Roomscape does not maintain a separate username/password account. A local user record is created from a fingerprint of the user's OpenAI credential, while the credential itself is encrypted at rest. After authentication, the user must define an Architect name and description before entering the room.
+Roomscape does not maintain a separate username/password account. The intended primary path is Codex-managed ChatGPT auth, which can expose plan and rate-limit style usage. The current local build keeps API-key auth as a developer fallback; for that path, a local user record is created from a fingerprint of the user's OpenAI credential, while the credential itself is encrypted at rest. After authentication, the user must define an Architect name and description before entering the room.
 
 ## Next Live SDK Step
 

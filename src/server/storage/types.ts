@@ -1,9 +1,12 @@
 import type { RoomConfig } from "../../shared/room";
+import type { AuthMode } from "../../shared/api";
 
 export interface UserRecord {
   id: string;
+  authMode: AuthMode;
   openAiAccountHash: string;
   openAiAccountLabel: string;
+  planType?: string;
   encryptedOpenAiKey: string;
   architectName: string;
   architectDescription: string;

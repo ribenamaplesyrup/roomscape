@@ -1,8 +1,12 @@
 import type { RoomConfig } from "./room";
 
+export type AuthMode = "chatgpt" | "apiKey";
+
 export interface PublicUser {
   id: string;
+  authMode: AuthMode;
   openAiAccountLabel: string;
+  planType?: string;
   architectName: string;
   architectDescription: string;
   isArchitectConfigured: boolean;

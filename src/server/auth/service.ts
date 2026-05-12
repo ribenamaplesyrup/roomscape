@@ -32,6 +32,7 @@ export class AuthService {
     } else {
       user = {
         id: randomUUID(),
+        authMode: "apiKey",
         openAiAccountHash,
         openAiAccountLabel: labelOpenAiCredential(openAiKey),
         encryptedOpenAiKey: encryptSecret(openAiKey),
@@ -98,7 +99,9 @@ export function toPublicUser(user: UserRecord): PublicUser {
   const architectDescription = user.architectDescription ?? "";
   return {
     id: user.id,
+    authMode: user.authMode ?? "apiKey",
     openAiAccountLabel: user.openAiAccountLabel ?? "OpenAI account",
+    ...(user.planType ? { planType: user.planType } : {}),
     architectName,
     architectDescription,
     isArchitectConfigured: Boolean(architectName && architectDescription),
@@ -111,5 +114,5 @@ function fingerprintOpenAiCredential(openAiKey: string): string {
 
 function labelOpenAiCredential(openAiKey: string): string {
   const visible = openAiKey.slice(-4).padStart(4, "*");
-  return `OpenAI credential ...${visible}`;
+  return `API key ...${visible}`;
 }

@@ -12,6 +12,7 @@ interface ClientState {
   config: RoomConfig;
   logs: string[];
   totalCost: number;
+  promptRuns: number;
   rooms: SavedRoom[];
 }
 
@@ -20,6 +21,7 @@ const state: ClientState = {
   config: roomConfig,
   logs: [],
   totalCost: 0,
+  promptRuns: 0,
   rooms: [],
 };
 
@@ -50,32 +52,42 @@ function renderLanding() {
         <p class="eyebrow">Co-created interiors</p>
         <h1>Roomscape</h1>
         <p>Explore the world while building it.</p>
-        <button id="open-auth" type="button">Log in with OpenAI</button>
+        <button id="open-auth" type="button">Log in with ChatGPT</button>
       </section>
     </main>
   `;
-  document.querySelector<HTMLButtonElement>("#open-auth")!.addEventListener("click", renderOpenAiAuth);
+  document.querySelector<HTMLButtonElement>("#open-auth")!.addEventListener("click", renderChatGptAuth);
 }
 
-function renderOpenAiAuth() {
+function renderChatGptAuth() {
   app.innerHTML = `
     <main class="entry-shell">
       <section class="entry-panel">
         <button id="back-home" class="quiet-button" type="button">Roomscape</button>
         <div>
-          <p class="eyebrow">OpenAI authentication</p>
-          <h1>Connect your OpenAI account.</h1>
+          <p class="eyebrow">ChatGPT authentication</p>
+          <h1>Connect your ChatGPT account.</h1>
         </div>
+        <button id="chatgpt-login" type="button">Continue with ChatGPT</button>
+        <p id="chatgpt-note" class="form-note">ChatGPT managed auth will use Codex OAuth when the local auth bridge is wired.</p>
+        <details class="dev-fallback">
+          <summary>Developer API key fallback</summary>
         <form id="openai-form" class="auth-form">
           <input name="openAiKey" placeholder="OpenAI API key" type="password" autocomplete="off" required />
           <button type="submit">Continue</button>
         </form>
+        </details>
         <p id="auth-error" class="form-error"></p>
       </section>
     </main>
   `;
   document.querySelector<HTMLButtonElement>("#back-home")!.addEventListener("click", renderLanding);
+  document.querySelector<HTMLButtonElement>("#chatgpt-login")!.addEventListener("click", showPendingChatGptAuth);
   document.querySelector<HTMLFormElement>("#openai-form")!.addEventListener("submit", submitOpenAiAuth);
+}
+
+function showPendingChatGptAuth() {
+  document.querySelector("#auth-error")!.textContent = "ChatGPT login is the primary path, but the Codex managed-auth bridge is not wired in this local app yet. Use the developer API key fallback for now.";
 }
 
 async function submitOpenAiAuth(event: SubmitEvent) {
@@ -100,7 +112,7 @@ function renderArchitectSetup() {
   app.innerHTML = `
     <main class="entry-shell architect-entry">
       <section class="entry-panel wide">
-        <p class="eyebrow">${escapeHtml(state.user?.openAiAccountLabel ?? "OpenAI connected")}</p>
+        <p class="eyebrow">${escapeHtml(accountLabel())}</p>
         <h1>Name your Architect.</h1>
         <form id="architect-form" class="auth-form">
           <input name="architectName" placeholder="Architect name, e.g. Gulf Futurist" value="${escapeHtml(state.user?.architectName ?? "")}" required />
@@ -134,7 +146,7 @@ function renderWorkspace() {
       <div id="room-canvas" class="room-canvas"></div>
       <aside class="overlay">
         <div class="identity">
-          <span>${state.user?.openAiAccountLabel ?? ""}</span>
+          <span>${escapeHtml(accountLabel())}</span>
           <strong>${state.user?.architectName ?? ""}</strong>
         </div>
         <form id="prompt-form" class="prompt-form">
@@ -153,7 +165,7 @@ function renderWorkspace() {
           ${state.rooms.map((room) => `<option value="${room.id}">${escapeHtml(room.name)}</option>`).join("")}
         </select>
         <div class="telemetry">
-          <div><span>Session cost</span><strong id="cost">$${state.totalCost.toFixed(4)}</strong></div>
+          <div><span>Session usage</span><strong id="usage">${escapeHtml(sessionUsageLabel())}</strong></div>
           <pre id="logs">${state.logs.map(escapeHtml).join("\n")}</pre>
         </div>
       </aside>
@@ -199,6 +211,7 @@ function handleAgentEvent(event: AgentEvent) {
   if (event.type === "permission-request") state.logs.push(`PERMISSION REQUIRED: ${event.request.reason} -> ${event.request.requestedPath}`);
   if (event.type === "error") state.logs.push(`ERROR: ${event.message}`);
   if (event.type === "room-updated") {
+    state.promptRuns += 1;
     const pose = renderer?.pose();
     state.config = event.config;
     renderer?.applyConfig(event.config);
@@ -232,8 +245,24 @@ async function loadRoomSelection(event: Event) {
 }
 
 function updateTelemetry() {
-  document.querySelector("#cost")!.textContent = `$${state.totalCost.toFixed(4)}`;
+  document.querySelector("#usage")!.textContent = sessionUsageLabel();
   document.querySelector("#logs")!.textContent = state.logs.join("\n");
+}
+
+function accountLabel(): string {
+  if (!state.user) return "OpenAI connected";
+  if (state.user.authMode === "chatgpt") {
+    return state.user.planType ? `ChatGPT ${state.user.planType}` : "ChatGPT account";
+  }
+  return state.user.openAiAccountLabel;
+}
+
+function sessionUsageLabel(): string {
+  if (state.user?.authMode === "chatgpt") {
+    const plan = state.user.planType ? `${state.user.planType} plan` : "ChatGPT";
+    return `${state.promptRuns} runs | ${plan}`;
+  }
+  return `${state.promptRuns} runs | $${state.totalCost.toFixed(4)}`;
 }
 
 async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {

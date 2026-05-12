@@ -5,7 +5,7 @@ Roomscape is a browser-based 3D interior co-creation app. Users enter a bare Thr
 This repository is intentionally small for the first TDD slice:
 
 - Node/Vite/TypeScript full-stack app.
-- OpenAI-only credential authentication with encrypted stored credentials.
+- ChatGPT-first entry flow, with API-key auth kept as a developer fallback until the Codex managed-auth bridge is wired.
 - Architect setup after authentication with separate name and description fields.
 - File-backed room persistence under `.roomscape/data.json`.
 - Active room code sandbox under `sandbox/rooms/active`.
@@ -24,7 +24,7 @@ Then open `http://127.0.0.1:8787`.
 
 ## Entry Flow
 
-Roomscape starts on a distinct landing page. The user connects with an OpenAI credential, then defines the Architect with a persona name and a separate description before entering the room.
+Roomscape starts on a distinct landing page. The intended primary path is ChatGPT managed auth through Codex; the current local build keeps API-key auth as a developer fallback. After authentication, the user defines the Architect with a persona name and a separate description before entering the room.
 
 ## Development Notes
 

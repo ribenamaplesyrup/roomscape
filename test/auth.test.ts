@@ -15,6 +15,7 @@ describe("auth service", () => {
     });
     const data = await store.read();
     expect(authenticated.user.openAiAccountLabel).toContain("...test");
+    expect(authenticated.user.authMode).toBe("apiKey");
     expect(data.users[0]?.encryptedOpenAiKey).not.toContain("sk-test");
     expect(data.users[0]).not.toHaveProperty("passwordHash");
   });

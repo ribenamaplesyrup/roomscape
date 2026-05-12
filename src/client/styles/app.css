@@ -104,6 +104,22 @@ h1 {
   color: #ffb4a6;
 }
 
+.form-note {
+  margin: 0;
+  color: #aeb8ab;
+  line-height: 1.45;
+}
+
+.dev-fallback {
+  display: grid;
+  gap: 12px;
+  color: #c5ccc2;
+}
+
+.dev-fallback summary {
+  cursor: pointer;
+}
+
 .room-canvas {
   min-width: 0;
   min-height: 100vh;
