@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
+import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
 import { CodexSdkArchitectRunner } from "../src/server/agent/codexArchitectRunner";
 import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import type { AgentEvent } from "../src/shared/api";
@@ -10,6 +10,7 @@ import { emptyRoomConfig } from "../src/shared/room";
 
 class FakeCodexThread {
   public prompts: string[] = [];
+  public turnOptions: TurnOptions[] = [];
   private readonly turns: FakeTurn[];
 
   public constructor(
@@ -23,8 +24,9 @@ class FakeCodexThread {
   }
 
   /** Captures the prompt and returns deterministic Codex-style stream events. */
-  public async runStreamed(input: string): Promise<{ events: AsyncIterable<ThreadEvent> }> {
+  public async runStreamed(input: string, turnOptions: TurnOptions = {}): Promise<{ events: AsyncIterable<ThreadEvent> }> {
     this.prompts.push(input);
+    this.turnOptions.push(turnOptions);
     const turn = this.turns.shift();
     if (!turn) throw new Error("Unexpected Codex turn.");
     await turn.beforeStream?.();
@@ -101,6 +103,7 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("rendered room remains continuous with no gaps");
     expect(codex.thread.prompt).not.toContain("Gulf Futurist");
     expect(codex.thread.prompt).not.toContain("Atmosphere and texture are primary");
+    expect(codex.thread.turnOptions[0]?.signal).toBeUndefined();
     expect(events.some((event) => event.type === "scene-updated")).toBe(true);
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("green table scene");
     expect(events.at(-1)).toMatchObject({ type: "complete" });
@@ -139,6 +142,7 @@ describe("Codex SDK architect runner", () => {
     await runner.run(runInput({ prompt: "Add a green table", currentConfig: emptyRoomConfig }), (event) => events.push(event));
 
     expect(codex.thread.prompts).toHaveLength(2);
+    expect(codex.thread.turnOptions).toHaveLength(2);
     expect(codex.thread.prompts[1]).toContain("Repair ./roomScene.ts");
     expect(codex.thread.prompts[1]).toContain("Do not remove the user's intended visual change");
     expect(events.some((event) => event.type === "log" && event.message.includes("failed validation"))).toBe(true);
@@ -520,6 +524,17 @@ describe("Codex SDK architect runner", () => {
 
     expect(codex.options).toBeNull();
     expect(events.at(-1)?.type).toBe("permission-request");
+  });
+
+  it("passes abort signals through to Codex streamed turns", async () => {
+    const root = await mkRoomRoot();
+    const signal = new AbortController().signal;
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeRoomScene(root, "green table scene"));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+
+    await runner.run(runInput({ prompt: "Add a green table", currentConfig: emptyRoomConfig, signal }), () => undefined);
+
+    expect(codex.thread.turnOptions[0]?.signal).toBe(signal);
   });
 });
 

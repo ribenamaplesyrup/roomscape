@@ -1,11 +1,11 @@
-import { Codex, type ThreadEvent, type ThreadOptions, type Usage } from "@openai/codex-sdk";
+import { Codex, type ThreadEvent, type ThreadOptions, type TurnOptions, type Usage } from "@openai/codex-sdk";
 import type { AgentEvent } from "../../shared/api";
 import type { ArchitectRunInput, ArchitectRunner } from "./architectRunner";
 import { RoomCodeRepository, SandboxViolationError } from "./roomCodeRepository";
 import { evaluateSandboxPath } from "./sandboxPolicy";
 
 interface CodexThread {
-  runStreamed(input: string): Promise<{ events: AsyncIterable<ThreadEvent> }>;
+  runStreamed(input: string, turnOptions?: TurnOptions): Promise<{ events: AsyncIterable<ThreadEvent> }>;
 }
 
 interface CodexThreadFactory {
@@ -48,7 +48,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         approvalPolicy: "never",
         networkAccessEnabled: false,
       });
-      const initialTurn = await thread.runStreamed(buildArchitectPrompt(input, currentScene));
+      const initialTurn = await thread.runStreamed(buildArchitectPrompt(input, currentScene), turnOptions(input.signal));
       if (await this.streamTurn(initialTurn.events, emit, input.signal)) return;
       throwIfAborted(input.signal);
 
@@ -106,7 +106,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
       }
 
       emit(log(`Generated scene failed validation. Asking Codex to repair it without changing the user intent.\n${validationErrors.join("\n")}`));
-      const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors));
+      const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors), turnOptions(input.signal));
       if (await this.streamTurn(repairTurn.events, emit, input.signal)) {
         return null;
       }
@@ -228,6 +228,10 @@ function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, valid
     "Current invalid roomScene.ts:",
     invalidScene,
   ].join("\n");
+}
+
+function turnOptions(signal: AbortSignal | undefined): TurnOptions {
+  return signal ? { signal } : {};
 }
 
 function log(message: string): AgentEvent {
