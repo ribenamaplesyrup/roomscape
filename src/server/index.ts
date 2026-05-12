@@ -4,7 +4,6 @@ import { createServer as createViteServer } from "vite";
 import { AgentRunBus } from "./agent/architectRunner";
 import { CodexSdkArchitectRunner } from "./agent/codexArchitectRunner";
 import { CodexAppServerClient } from "./codex/appServerClient";
-import { createGitHubOAuthProvider } from "./auth/githubOAuth";
 import { RoomCodeRepository } from "./agent/roomCodeRepository";
 import { createApp } from "./http/app";
 import { createDataStore } from "./storage/createDataStore";
@@ -26,9 +25,8 @@ const roomCode = new RoomCodeRepository(path.join(cwd, "sandbox/rooms/active"));
 const runner = new CodexSdkArchitectRunner(roomCode);
 const bus = new AgentRunBus();
 const codex = new CodexAppServerClient();
-const githubOAuth = createGitHubOAuthProvider(process.env);
 const staticRoot = path.join(cwd, "dist/client");
-const app = createApp({ store, runner, bus, roomCode, codex, ...(githubOAuth ? { githubOAuth } : {}), ...(vite ? { vite } : { staticRoot }) });
+const app = createApp({ store, runner, bus, roomCode, codex, ...(vite ? { vite } : { staticRoot }) });
 
 createServer((req, res) => {
   app(req, res);

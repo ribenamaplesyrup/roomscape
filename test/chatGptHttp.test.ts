@@ -10,7 +10,6 @@ import { createApp, roomscapeDataPath } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
 import { emptyRoomConfig } from "../src/shared/room";
-import type { GitHubOAuthProfile, GitHubOAuthProvider } from "../src/server/auth/githubOAuth";
 
 class FakeCodexBridge implements CodexAuthBridge {
   public account: CodexChatGptAccount | null = null;
@@ -46,27 +45,6 @@ class FakeCodexBridge implements CodexAuthBridge {
   }
 }
 
-class FakeGitHubOAuthProvider implements GitHubOAuthProvider {
-  public lastState: string | undefined;
-  public lastRedirectUri: string | undefined;
-  public profile: GitHubOAuthProfile = {
-    accountId: "123",
-    username: "designer",
-    email: "designer@example.com",
-    name: "Room Designer",
-  };
-
-  public authorizationUrl(state: string, redirectUri: string): string {
-    this.lastState = state;
-    this.lastRedirectUri = redirectUri;
-    return `https://github.com/login/oauth/authorize?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-  }
-
-  public async exchangeCode(): Promise<GitHubOAuthProfile> {
-    return this.profile;
-  }
-}
-
 const noopRunner: ArchitectRunner = {
   async run() {},
 };
@@ -90,61 +68,6 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_PATH: "/data/roomscape.json" })).toBe("/data/roomscape.json");
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "data.json"));
     expect(roomscapeDataPath("/app", {})).toBe(path.join("/app", ".roomscape", "data.json"));
-  });
-
-  it("reports GitHub as the hosted auth provider when configured", async () => {
-    const handler = createApp({
-      store: new MemoryStore(),
-      runner: noopRunner,
-      bus: new AgentRunBus(),
-      githubOAuth: new FakeGitHubOAuthProvider(),
-    });
-
-    const providers = await request<{ chatgpt: boolean; github: boolean }>(handler, "GET", "/api/auth/providers");
-    expect(providers.body).toEqual({ chatgpt: false, github: true });
-  });
-
-  it("authenticates through GitHub OAuth using a secure hosted callback", async () => {
-    const githubOAuth = new FakeGitHubOAuthProvider();
-    const handler = createApp({
-      store: new MemoryStore(),
-      runner: noopRunner,
-      bus: new AgentRunBus(),
-      githubOAuth,
-    });
-
-    const started = await request<Record<string, never>>(handler, "GET", "/api/auth/github/start", undefined, undefined, {
-      host: "roomscape.example",
-      "x-forwarded-proto": "https",
-    });
-    expect(started.status).toBe(302);
-    expect(started.headers.location).toContain("https://github.com/login/oauth/authorize");
-    expect(githubOAuth.lastRedirectUri).toBe("https://roomscape.example/api/auth/github/callback");
-
-    const callback = await request<Record<string, never>>(handler, "GET", `/api/auth/github/callback?code=abc&state=${githubOAuth.lastState}`, undefined, undefined, {
-      host: "roomscape.example",
-      "x-forwarded-proto": "https",
-    });
-    expect(callback.status).toBe(302);
-    expect(callback.headers.location).toBe("/");
-    expect(callback.headers["set-cookie"]).toContain("roomscape_session=");
-    expect(callback.headers["set-cookie"]).toContain("Secure");
-  });
-
-  it("rejects a GitHub OAuth callback with an invalid state", async () => {
-    const handler = createApp({
-      store: new MemoryStore(),
-      runner: noopRunner,
-      bus: new AgentRunBus(),
-      githubOAuth: new FakeGitHubOAuthProvider(),
-    });
-
-    const callback = await request<{ error: string }>(handler, "GET", "/api/auth/github/callback?code=abc&state=missing", undefined, undefined, {
-      host: "roomscape.example",
-      "x-forwarded-proto": "https",
-    });
-    expect(callback.status).toBe(400);
-    expect(callback.body.error).toContain("state");
   });
 
   it("creates a session from an existing Codex ChatGPT account when popups are unavailable", async () => {

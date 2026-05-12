@@ -1,6 +1,6 @@
 import type { RoomConfig } from "./room";
 
-export type AuthMode = "chatgpt" | "github";
+export type AuthMode = "chatgpt";
 
 export interface PublicUser {
   id: string;
@@ -8,11 +8,6 @@ export interface PublicUser {
   openAiAccountLabel: string;
   accountLabel: string;
   planType?: string;
-}
-
-export interface AuthProviders {
-  chatgpt: boolean;
-  github: boolean;
 }
 
 export interface SavedRoom {

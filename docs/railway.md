@@ -31,8 +31,6 @@ Smoke checks:
 - `HOST`: optional; defaults to `0.0.0.0`.
 - `ROOMSCAPE_DATA_DIR`: optional directory for the JSON store, for example `/data` when a Railway volume is mounted there.
 - `ROOMSCAPE_DATA_PATH`: optional full path to the JSON store. Takes precedence over `ROOMSCAPE_DATA_DIR`.
-- `GITHUB_CLIENT_ID`: enables hosted GitHub OAuth when paired with `GITHUB_CLIENT_SECRET`.
-- `GITHUB_CLIENT_SECRET`: GitHub OAuth app secret. Store only in Railway variables; do not commit it.
 - `DATABASE_URL`: reserved for the upcoming PostgreSQL-backed store. If this is set today, Roomscape fails on startup instead of silently using local JSON storage.
 
 Use `.env.example` as the local template for the interim volume-backed deployment.
@@ -66,14 +64,14 @@ Every room/world query should include the authenticated user's id, and every age
 
 ## Next Implementation Steps
 
-1. Create a GitHub OAuth app for the Railway URL and set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` on the `roomscape` service.
+1. Decide the ChatGPT-native hosted auth shape, most likely a ChatGPT Apps/MCP-backed Roomscape entry point rather than a generic web OAuth provider.
 2. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
 3. Move `activeConfig` out of process memory and into user/world scoped storage.
 4. Replace `sandbox/rooms/active` with temporary per-run workspaces and persisted per-world scene source.
 
 ## ChatGPT Auth Caveat
 
-The current ChatGPT sign-in is mediated through Codex's local app-server bridge. That works for local Codex workflows, but it is not a production web OAuth flow for arbitrary Railway users. Before public deployment, replace it with a web-safe auth provider or an official OpenAI/ChatGPT OAuth mechanism if one is available for this use case.
+The current ChatGPT sign-in is mediated through Codex's local app-server bridge. That works for local Codex workflows, but it is not a production web OAuth flow for arbitrary Railway users. Roomscape's product direction is ChatGPT/OpenAI-native auth, so the hosted path should become a ChatGPT Apps/MCP integration or an official hosted ChatGPT/OpenAI account linking mechanism if one becomes available for this use case.
 
 Observed Railway behavior:
 
@@ -81,19 +79,6 @@ Observed Railway behavior:
 - `POST /api/auth/chatgpt/existing` returns `202 {"status":"pending"}` because Railway has no local Codex ChatGPT account session to reuse.
 - Protected APIs correctly reject unauthenticated requests.
 
-## Hosted GitHub Auth
+## ChatGPT App Direction
 
-This branch includes a production-safe GitHub OAuth path:
-
-- `GET /api/auth/providers` tells the frontend whether GitHub or local ChatGPT auth is available.
-- `GET /api/auth/github/start` creates a short-lived state token and redirects to GitHub.
-- `GET /api/auth/github/callback` validates state, exchanges the code, stores a user keyed by a fingerprint of the GitHub account id, sets an HTTP-only session cookie, and redirects back to `/`.
-- HTTPS callbacks set the session cookie with `Secure`.
-
-To activate it on Railway:
-
-1. Create a GitHub OAuth app.
-2. Set Homepage URL to `https://roomscape-production.up.railway.app`.
-3. Set Authorization callback URL to `https://roomscape-production.up.railway.app/api/auth/github/callback`.
-4. Add the OAuth app credentials to Railway as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-5. Redeploy or restart the `roomscape` service.
+OpenAI's ChatGPT Apps/MCP docs describe an auth model where ChatGPT surfaces OAuth linking UI for app tools when the MCP server advertises OAuth metadata and returns `mcp/www_authenticate` challenges. That is different from a normal "Sign in with ChatGPT" button on a standalone website. If Roomscape should be available only to ChatGPT users, the next auth milestone is to build the ChatGPT app entry point and map ChatGPT-linked users to Roomscape user records there.

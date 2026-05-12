@@ -47,18 +47,18 @@ Testable outcomes:
 - Complete: `/api/auth/chatgpt/existing` returns `202 {"status":"pending"}` on Railway.
 - Complete: result is documented in `docs/railway.md`.
 
-## 5. Replace Local Codex Auth With Web-Safe Auth - In Progress
+## 5. Build ChatGPT-Native Auth - In Progress
 
-Pick and integrate a production auth provider such as Auth.js, Clerk, GitHub OAuth, Google OAuth, or an official OpenAI/ChatGPT OAuth path if available for this use case.
+Roomscape should authenticate as a ChatGPT/OpenAI-native experience, not with a generic third-party identity provider. The local Codex app-server bridge proves the ChatGPT account flow locally, but the hosted Railway site needs either a ChatGPT Apps/MCP integration or an official hosted ChatGPT/OpenAI account linking path before it can be considered production auth.
 
 Testable outcomes:
 
-- Complete: hosted GitHub OAuth start/callback routes are implemented.
-- Complete: the landing page switches to GitHub sign-in when GitHub OAuth env vars are configured.
-- Complete: HTTPS OAuth callbacks set a `Secure` HTTP-only session cookie.
-- Complete: user identity is keyed by a stable fingerprint of the GitHub account id.
-- Complete: auth tests cover provider discovery, callback success, invalid state, session lookup, and existing unauthorized API access.
-- Pending: create a GitHub OAuth app, set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` on Railway, redeploy, and verify login end-to-end.
+- Complete: local ChatGPT/Codex auth remains the only visible sign-in path.
+- Complete: GitHub OAuth has been removed from the product path.
+- Complete: hosted Railway behavior is documented: the current local Codex callback is not a production ChatGPT auth flow.
+- Pending: choose the ChatGPT-native integration shape, most likely a ChatGPT Apps/MCP-backed Roomscape entry point.
+- Pending: implement stable ChatGPT user identity mapping for hosted users.
+- Pending: verify that User A and User B get distinct Roomscape user ids and isolated worlds.
 
 ## 6. Introduce PostgreSQL Data Store
 

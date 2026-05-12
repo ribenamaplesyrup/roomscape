@@ -1,5 +1,5 @@
 import "./styles/app.css";
-import type { AgentEvent, AuthProviders, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
+import type { AgentEvent, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
 import { modelOptions } from "../shared/models";
 import type { RoomConfig } from "../shared/room";
 import { roomConfig } from "../../sandbox/rooms/active/roomConfig";
@@ -14,7 +14,6 @@ const activeRoomSceneImporters = import.meta.glob("../../sandbox/rooms/active/ac
 
 interface ClientState {
   user: PublicUser | null;
-  authProviders: AuthProviders;
   config: RoomConfig;
   logs: string[];
   totalCost: number;
@@ -27,7 +26,6 @@ interface ClientState {
 
 const state: ClientState = {
   user: null,
-  authProviders: { chatgpt: true, github: false },
   config: roomConfig,
   logs: initialStoredSession.logs,
   totalCost: 0,
@@ -55,7 +53,6 @@ window.addEventListener("beforeunload", persistSessionState);
 void boot();
 
 async function boot() {
-  state.authProviders = await api<AuthProviders>("/api/auth/providers");
   const session = await api<{ user: PublicUser | null }>("/api/session");
   state.user = session.user;
   if (state.user) {
@@ -84,19 +81,12 @@ function renderLanding() {
       <section class="landing-title" aria-labelledby="landing-heading">
         <h1 id="landing-heading">Roomscape</h1>
         <p class="tagline">Exploring the world while building it.</p>
-        ${state.authProviders.github
-          ? '<button id="github-login" type="button">Sign in with GitHub</button>'
-          : '<button id="chatgpt-login" type="button">Sign in with ChatGPT</button>'}
+        <button id="chatgpt-login" type="button">Sign in with ChatGPT</button>
         <p id="auth-error" class="form-error" hidden></p>
       </section>
     </main>
   `;
-  document.querySelector<HTMLButtonElement>("#github-login")?.addEventListener("click", startGitHubAuth);
-  document.querySelector<HTMLButtonElement>("#chatgpt-login")?.addEventListener("click", startChatGptAuth);
-}
-
-function startGitHubAuth() {
-  window.location.href = "/api/auth/github/start";
+  document.querySelector<HTMLButtonElement>("#chatgpt-login")!.addEventListener("click", startChatGptAuth);
 }
 
 async function startChatGptAuth() {

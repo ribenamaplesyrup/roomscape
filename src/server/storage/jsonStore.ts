@@ -43,7 +43,6 @@ function sanitizeData(data: RoomscapeData): RoomscapeData {
         accountLabel: safeUser.accountLabel ?? safeUser.openAiAccountLabel ?? "OpenAI account",
       };
     }),
-    oauthStates: data.oauthStates ?? [],
     rooms: data.rooms.map((room) => ({
       ...room,
       sceneSource: room.sceneSource ?? "",
