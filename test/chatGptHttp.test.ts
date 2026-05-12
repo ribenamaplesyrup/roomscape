@@ -84,7 +84,63 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(loaded.body.room.id).toBe(saved.body.room.id);
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
   });
+
+  it("cancels active and queued room edits when the room is reset or the user signs out", async () => {
+    const codex = new FakeCodexBridge();
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-runs-"));
+    const runner = new HangingRunner();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+    const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const sessionCookie = completed.headers["set-cookie"];
+
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, sessionCookie);
+    await runner.waitForStart();
+    expect(runner.lastSignal?.aborted).toBe(false);
+
+    await request<{ config: { name: string } }>(handler, "POST", "/api/active-room/reset", undefined, sessionCookie);
+    expect(runner.lastSignal?.aborted).toBe(true);
+
+    runner.resetStartWaiter();
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a table", model: "gpt-5.5" }, sessionCookie);
+    await runner.waitForStart();
+    expect(runner.lastSignal?.aborted).toBe(false);
+
+    await request<{ ok: boolean }>(handler, "POST", "/api/auth/logout", undefined, sessionCookie);
+    expect(runner.lastSignal?.aborted).toBe(true);
+  });
 });
+
+class HangingRunner implements ArchitectRunner {
+  public lastSignal: AbortSignal | undefined;
+  private resolveStarted: (() => void) | undefined;
+  private started = new Promise<void>((resolve) => {
+    this.resolveStarted = resolve;
+  });
+
+  /** Records run start and then stays pending until the app cancels it. */
+  public async run(input: Parameters<ArchitectRunner["run"]>[0]): Promise<void> {
+    this.lastSignal = input.signal;
+    this.resolveStarted?.();
+    await new Promise(() => undefined);
+  }
+
+  public waitForStart(): Promise<void> {
+    return this.started;
+  }
+
+  public resetStartWaiter(): void {
+    this.started = new Promise<void>((resolve) => {
+      this.resolveStarted = resolve;
+    });
+  }
+}
 
 type AppHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 

@@ -34,9 +34,11 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
   public async run(input: ArchitectRunInput, emit: (event: AgentEvent) => void): Promise<void> {
     try {
       emit(log(`Starting Codex Three.js scene edit with ${input.model}.`));
+      throwIfAborted(input.signal);
       this.preflightPrompt(input.prompt);
       const currentScene = await this.roomCode.readRawScene();
       const lastGoodScene = await this.roomCode.readRawActiveScene();
+      throwIfAborted(input.signal);
 
       const thread = this.codex.startThread({
         model: input.model,
@@ -47,14 +49,20 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         networkAccessEnabled: false,
       });
       const initialTurn = await thread.runStreamed(buildArchitectPrompt(input, currentScene));
-      if (await this.streamTurn(initialTurn.events, emit)) return;
+      if (await this.streamTurn(initialTurn.events, emit, input.signal)) return;
+      throwIfAborted(input.signal);
 
       const sceneSource = await this.validateOrRepairScene(thread, input, emit, currentScene, lastGoodScene);
       if (!sceneSource) return;
+      throwIfAborted(input.signal);
       await this.roomCode.writeActiveSceneSource(sceneSource);
       emit({ type: "scene-updated", at: new Date().toISOString() });
       emit({ type: "complete", runId: input.runId, at: new Date().toISOString() });
     } catch (error) {
+      if (error instanceof RunAbortedError) {
+        emit({ type: "error", message: "Room edit cancelled.", at: new Date().toISOString() });
+        return;
+      }
       if (error instanceof SandboxViolationError) {
         emit({ type: "permission-request", request: error.request, at: new Date().toISOString() });
         return;
@@ -76,12 +84,14 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     lastGoodScene: string,
   ): Promise<string | null> {
     for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt += 1) {
+      throwIfAborted(input.signal);
       const sceneSource = await this.roomCode.readRawScene();
       const normalizedSource = this.roomCode.normalizeSceneSource(sceneSource);
       if (normalizedSource !== sceneSource) {
         await this.roomCode.writeSceneSource(normalizedSource);
         emit(log("Cleaned unsafe Three.js namespace type annotations before validation."));
       }
+      throwIfAborted(input.signal);
       const validationErrors = [
         ...this.roomCode.validateSceneSource(normalizedSource),
         ...validateTargetedEditScope(input.prompt, originalScene, normalizedSource),
@@ -97,19 +107,23 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
 
       emit(log(`Generated scene failed validation. Asking Codex to repair it without changing the user intent.\n${validationErrors.join("\n")}`));
       const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors));
-      if (await this.streamTurn(repairTurn.events, emit)) {
+      if (await this.streamTurn(repairTurn.events, emit, input.signal)) {
         return null;
       }
     }
     return null;
   }
 
-  private async streamTurn(events: AsyncIterable<ThreadEvent>, emit: (event: AgentEvent) => void): Promise<boolean> {
-    for await (const event of events) {
+  private async streamTurn(events: AsyncIterable<ThreadEvent>, emit: (event: AgentEvent) => void, signal?: AbortSignal): Promise<boolean> {
+    const iterator = events[Symbol.asyncIterator]();
+    while (true) {
+      throwIfAborted(signal);
+      const next = await nextEvent(iterator, signal);
+      if (next.done) return false;
+      const event = next.value;
       const shouldHalt = this.handleCodexEvent(event, emit);
       if (shouldHalt) return true;
     }
-    return false;
   }
 
   private preflightPrompt(prompt: string): void {
@@ -213,6 +227,25 @@ function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, valid
 
 function log(message: string): AgentEvent {
   return { type: "log", message, at: new Date().toISOString() };
+}
+
+class RunAbortedError extends Error {
+  public constructor() {
+    super("Room edit cancelled.");
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new RunAbortedError();
+}
+
+function nextEvent(iterator: AsyncIterator<ThreadEvent>, signal?: AbortSignal): Promise<IteratorResult<ThreadEvent>> {
+  if (!signal) return iterator.next();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new RunAbortedError());
+    signal.addEventListener("abort", abort, { once: true });
+    iterator.next().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function validateTargetedEditScope(prompt: string, before: string, after: string): string[] {

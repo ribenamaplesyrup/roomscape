@@ -8,6 +8,7 @@ export interface ArchitectRunInput {
   prompt: string;
   model: string;
   currentConfig: RoomConfig;
+  signal?: AbortSignal;
 }
 
 export interface ArchitectRunner {
@@ -70,6 +71,11 @@ export class AgentRunBus {
     }
     this.bus.on(runId, listener);
     return () => this.bus.off(runId, listener);
+  }
+
+  /** Clears remembered run events so reset and sign-out start from a clean session. */
+  public clear(): void {
+    this.history.clear();
   }
 }
 

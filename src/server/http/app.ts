@@ -28,6 +28,9 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
   const rooms = new RoomRepository(store);
   let activeConfig: RoomConfig = freshRoomConfig();
   let runQueue: Promise<void> = Promise.resolve();
+  let runGeneration = 0;
+  const activeRunControllers = new Set<AbortController>();
+  const knownRunIds = new Set<string>();
 
   /** Handles API routes first, then delegates static and HMR traffic to Vite in development. */
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -67,6 +70,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+      cancelAllRuns("Signed out; cleared active room edits.");
       await auth.logout(readCookie(req, "roomscape_session"));
       clearSessionCookie(res);
       sendJson(res, 200, { ok: true });
@@ -138,6 +142,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
+      cancelAllRuns("Room reset; cleared active room edits.");
       activeConfig = freshRoomConfig();
       const code = requireRoomCode(roomCode);
       await code.writeConfig(activeConfig);
@@ -148,22 +153,36 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     if (req.method === "POST" && url.pathname === "/api/agent/runs") {
       const body = await readJson<{ prompt: string; model: string; currentConfig?: RoomConfig }>(req);
       const runId = randomUUID();
+      const runVersion = runGeneration;
+      const controller = new AbortController();
       const currentConfig = body.currentConfig ?? activeConfig;
+      activeRunControllers.add(controller);
+      knownRunIds.add(runId);
       bus.publish(runId, { type: "log", message: "Queued room edit.", at: new Date().toISOString() });
       runQueue = runQueue
         .catch(() => undefined)
-        .then(() => runner.run(
-          {
-            runId,
-            prompt: body.prompt,
-            model: body.model,
-            currentConfig,
-          },
-          (event) => {
-            if (event.type === "room-updated") activeConfig = event.config;
-            bus.publish(runId, event);
-          },
-        ));
+        .then(async () => {
+          if (runVersion !== runGeneration || controller.signal.aborted) return;
+          bus.publish(runId, { type: "log", message: "Starting queued room edit.", at: new Date().toISOString() });
+          await runner.run(
+            {
+              runId,
+              prompt: body.prompt,
+              model: body.model,
+              currentConfig,
+              signal: controller.signal,
+            },
+            (event) => {
+              if (runVersion !== runGeneration || controller.signal.aborted) return;
+              if (event.type === "room-updated") activeConfig = event.config;
+              bus.publish(runId, event);
+            },
+          );
+        })
+        .finally(() => {
+          activeRunControllers.delete(controller);
+          knownRunIds.delete(runId);
+        });
       sendJson(res, 202, { runId });
       return;
     }
@@ -183,6 +202,18 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     }
 
     throw new HttpError(404, `No route for ${req.method} ${url.pathname}`);
+  }
+
+  function cancelAllRuns(reason: string): void {
+    runGeneration += 1;
+    for (const controller of activeRunControllers) controller.abort();
+    activeRunControllers.clear();
+    for (const runId of knownRunIds) {
+      bus.publish(runId, { type: "error", message: reason, at: new Date().toISOString() });
+    }
+    knownRunIds.clear();
+    bus.clear();
+    runQueue = Promise.resolve();
   }
 }
 
