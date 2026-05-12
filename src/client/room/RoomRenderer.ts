@@ -21,6 +21,7 @@ export class RoomRenderer {
   private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
   private readonly onKeyUp = (event: KeyboardEvent) => this.handleKeyUp(event);
   private readonly onMouseMove = (event: MouseEvent) => this.handleMouseMove(event);
+  private readonly onCanvasClick = () => requestPointerLockSafely(this.renderer.domElement);
   private yaw = 0;
   private pitch = 0;
   private frame = 0;
@@ -116,6 +117,7 @@ export class RoomRenderer {
     document.removeEventListener("keydown", this.onKeyDown);
     document.removeEventListener("keyup", this.onKeyUp);
     document.removeEventListener("mousemove", this.onMouseMove);
+    this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
     window.removeEventListener("resize", this.onResize);
     disposeObject3D(this.dynamicObjects);
     this.mount.replaceChildren();
@@ -176,7 +178,7 @@ export class RoomRenderer {
   }
 
   private bindInput(): void {
-    this.renderer.domElement.addEventListener("click", () => this.renderer.domElement.requestPointerLock());
+    this.renderer.domElement.addEventListener("click", this.onCanvasClick);
     document.addEventListener("keydown", this.onKeyDown);
     document.addEventListener("keyup", this.onKeyUp);
     document.addEventListener("mousemove", this.onMouseMove);
@@ -372,6 +374,15 @@ function horizontalCameraForward(camera: THREE.Camera): THREE.Vector3 {
 
 function isMovementKey(key: string): boolean {
   return key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
+}
+
+export function requestPointerLockSafely(element: HTMLElement): Promise<void> | undefined {
+  try {
+    // Embedded browsers may reject pointer lock; keyboard navigation still works.
+    return element.requestPointerLock().catch(() => undefined);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Keeps navigation finite without trapping the user inside the starter room. */

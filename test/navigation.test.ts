@@ -6,6 +6,7 @@ import {
   generatedAnimationHooks,
   hasGeneratedAnimation,
   positionIntersectsColliders,
+  requestPointerLockSafely,
 } from "../src/client/room/RoomRenderer";
 
 describe("first-person navigation", () => {
@@ -74,5 +75,19 @@ describe("first-person navigation", () => {
     root.userData.update = update;
 
     expect(generatedAnimationHooks(scene, root)).toEqual([update]);
+  });
+
+  it("ignores pointer lock failures in embedded browsers", async () => {
+    const rejectedElement = {
+      requestPointerLock: () => Promise.reject(new DOMException("blocked", "SecurityError")),
+    } as unknown as HTMLElement;
+    const throwingElement = {
+      requestPointerLock: () => {
+        throw new DOMException("blocked", "SecurityError");
+      },
+    } as unknown as HTMLElement;
+
+    await expect(requestPointerLockSafely(rejectedElement)).resolves.toBeUndefined();
+    expect(requestPointerLockSafely(throwingElement)).toBeUndefined();
   });
 });
