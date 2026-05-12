@@ -9,6 +9,7 @@ import type { RoomSceneModule } from "./room/sceneTypes";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const sessionStateKey = "roomscape.session.v1";
+const initialStoredSession = loadStoredSession();
 
 interface ClientState {
   user: PublicUser | null;
@@ -25,13 +26,13 @@ interface ClientState {
 const state: ClientState = {
   user: null,
   config: roomConfig,
-  logs: loadStoredSession().logs,
+  logs: initialStoredSession.logs,
   totalCost: 0,
-  promptRuns: loadStoredSession().promptRuns,
+  promptRuns: initialStoredSession.promptRuns,
   chatGptUsage: null,
   rooms: [],
-  activeRunIds: loadStoredSession().activeRunIds,
-  isWorking: loadStoredSession().isWorking,
+  activeRunIds: initialStoredSession.activeRunIds,
+  isWorking: initialStoredSession.isWorking,
 };
 
 let renderer: RoomRenderer | null = null;
@@ -41,9 +42,9 @@ let posePoll: number | undefined;
 let activityPoll: number | undefined;
 const activeSources = new Map<string, EventSource>();
 let chatGptAuthWindow: WindowProxy | null = null;
-let activeRunStartedAt: number | null = null;
-let activeRunLastEventAt: number | null = null;
-let activeRunModel: string | null = null;
+let activeRunStartedAt: number | null = initialStoredSession.activeRunStartedAt;
+let activeRunLastEventAt: number | null = initialStoredSession.activeRunLastEventAt;
+let activeRunModel: string | null = initialStoredSession.activeRunModel;
 
 window.addEventListener("beforeunload", persistSessionState);
 
@@ -186,7 +187,7 @@ function renderWorkspace() {
         </div>
         <form id="prompt-form" class="prompt-form">
           <select id="model-select" name="model" ${state.isWorking ? "disabled" : ""}>
-            ${modelOptions.map((model) => `<option value="${model.id}">${model.label}</option>`).join("")}
+            ${modelOptions.map((model) => `<option value="${model.id}" ${model.id === selectedModelId() ? "selected" : ""}>${model.label}</option>`).join("")}
           </select>
           <textarea id="prompt-input" name="prompt" rows="4" placeholder="Describe the exact room change." required ${state.isWorking ? "disabled" : ""}></textarea>
           <div class="prompt-actions">
@@ -239,7 +240,7 @@ function applyActiveScene() {
   try {
     renderer.applyScene(activeRoomScene);
   } catch (error) {
-    state.logs.push(`ERROR: Generated scene failed to render: ${error instanceof Error ? error.message : "Unknown scene error."}`);
+    pushLog(`ERROR: Generated scene failed to render: ${error instanceof Error ? error.message : "Unknown scene error."}`);
     renderer.applyScene(fallbackRoomScene);
     updateTelemetry();
   }
@@ -261,6 +262,7 @@ async function logout() {
     state.rooms = [];
     state.activeRunIds = [];
     state.isWorking = false;
+    clearActiveRunStatus();
     closeActiveSources();
     clearStoredSession();
     renderLanding();
@@ -306,7 +308,7 @@ const fallbackRoomScene: RoomSceneModule = {
 async function submitPrompt(event: SubmitEvent) {
   event.preventDefault();
   if (state.isWorking) {
-    state.logs.push("Cancel the active edit before starting a new one.");
+    pushLog("Cancel the active edit before starting a new one.");
     updateTelemetry();
     return;
   }
@@ -333,7 +335,7 @@ async function submitPrompt(event: SubmitEvent) {
   } catch (error) {
     state.isWorking = false;
     clearActiveRunStatus();
-    state.logs.push(`ERROR: ${error instanceof Error ? error.message : "Unable to start room edit."}`);
+    pushLog(`ERROR: ${error instanceof Error ? error.message : "Unable to start room edit."}`);
   } finally {
     updateTelemetry();
     persistSessionState();
@@ -345,13 +347,13 @@ async function cancelRoomEdit() {
   try {
     await api("/api/agent/runs/cancel", { method: "POST" });
   } catch (error) {
-    state.logs.push(`ERROR: ${error instanceof Error ? error.message : "Unable to cancel room edit."}`);
+    pushLog(`ERROR: ${error instanceof Error ? error.message : "Unable to cancel room edit."}`);
   } finally {
     closeActiveSources();
     state.activeRunIds = [];
     state.isWorking = false;
     clearActiveRunStatus();
-    state.logs.push("Room edit cancelled.");
+    pushLog("Room edit cancelled.");
     updateTelemetry();
     persistSessionState();
   }
@@ -394,11 +396,11 @@ function parseAgentEvent(message: MessageEvent): AgentEvent | null {
 
 function handleAgentEvent(event: AgentEvent, runId?: string) {
   activeRunLastEventAt = Date.now();
-  if (event.type === "log") state.logs.push(event.message);
+  if (event.type === "log") pushLog(event.message);
   if (event.type === "cost") state.totalCost += event.usd;
-  if (event.type === "permission-request") state.logs.push(`PERMISSION REQUIRED: ${event.request.reason} -> ${event.request.requestedPath}`);
-  if (event.type === "error") state.logs.push(`ERROR: ${event.message}`);
-  if (event.type === "complete" && runId) state.logs.push(`Run complete: ${runId.slice(0, 8)}.`);
+  if (event.type === "permission-request") pushLog(`PERMISSION REQUIRED: ${event.request.reason} -> ${event.request.requestedPath}`);
+  if (event.type === "error") pushLog(`ERROR: ${event.message}`);
+  if (event.type === "complete" && runId) pushLog(`Run complete: ${runId.slice(0, 8)}.`);
   if (event.type === "room-updated") {
     state.promptRuns += 1;
     const pose = renderer?.pose();
@@ -412,7 +414,7 @@ function handleAgentEvent(event: AgentEvent, runId?: string) {
   }
   if (event.type === "scene-updated") {
     state.promptRuns += 1;
-    state.logs.push("Scene module updated.");
+    pushLog("Scene module updated.");
   }
   updateTelemetry();
   persistSessionState();
@@ -432,6 +434,7 @@ async function resetRoom() {
   state.promptRuns = 0;
   state.activeRunIds = [];
   state.isWorking = false;
+  clearActiveRunStatus();
   closeActiveSources();
   renderer?.applyScene(activeRoomScene);
   const roomName = document.querySelector<HTMLInputElement>("#room-name");
@@ -449,7 +452,7 @@ async function loadRoomSelection(event: Event) {
   if (!id) return;
   const result = await api<{ room: SavedRoom }>(`/api/rooms/${id}`);
   state.config = result.room.config;
-  state.logs.push(`Loaded ${result.room.name}.`);
+  pushLog(`Loaded ${result.room.name}.`);
   renderWorkspace();
 }
 
@@ -461,16 +464,32 @@ function updateTelemetry() {
     logs.scrollTop = logs.scrollHeight;
   }
   updatePromptControls();
+  syncActivityPolling();
 }
 
 function renderLogContent(): string {
   const entries = state.logs.length > 0
     ? state.logs.map((entry) => `<div class="log-line">${escapeHtml(entry)}</div>`).join("")
     : '<div class="log-line log-muted">No room edits yet.</div>';
-  const activity = state.isWorking
-    ? '<div class="log-line log-activity"><span class="log-spinner" aria-hidden="true"></span><span>Processing edit<span class="log-ellipsis" aria-hidden="true"></span></span></div>'
-    : "";
+  const activity = state.isWorking ? renderRunActivity() : "";
   return entries + activity;
+}
+
+function renderRunActivity(): string {
+  const now = Date.now();
+  const startedAt = activeRunStartedAt ?? now;
+  const lastEventAt = activeRunLastEventAt ?? startedAt;
+  const elapsed = Math.max(0, now - startedAt);
+  const idle = Math.max(0, now - lastEventAt);
+  const model = modelLabel(activeRunModel);
+  const staleClass = idle >= 60_000 ? " log-activity-stale" : "";
+  const stale = idle >= 60_000
+    ? `<div class="log-line log-muted">No new model event for ${formatDuration(idle)}.</div>`
+    : "";
+  return [
+    `<div class="log-line log-activity${staleClass}"><span class="log-spinner" aria-hidden="true"></span><span>${escapeHtml(model)} working for ${formatDuration(elapsed)}<span class="log-ellipsis" aria-hidden="true"></span></span></div>`,
+    stale,
+  ].join("");
 }
 
 function updatePromptControls() {
@@ -482,6 +501,42 @@ function updatePromptControls() {
   if (model) model.disabled = state.isWorking;
   if (build) build.disabled = state.isWorking;
   if (cancel) cancel.hidden = !state.isWorking;
+}
+
+function syncActivityPolling(): void {
+  if (state.isWorking && !activityPoll) {
+    activityPoll = window.setInterval(updateTelemetry, 1000);
+  }
+  if (!state.isWorking && activityPoll) {
+    window.clearInterval(activityPoll);
+    activityPoll = undefined;
+  }
+}
+
+function selectedModelId(): string {
+  return activeRunModel ?? modelOptions[0]!.id;
+}
+
+function modelLabel(modelId: string | null): string {
+  return modelOptions.find((model) => model.id === modelId)?.label ?? "Model";
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function pushLog(message: string): void {
+  if (state.logs.at(-1) === message) return;
+  state.logs.push(message);
+}
+
+function clearActiveRunStatus(): void {
+  activeRunStartedAt = null;
+  activeRunLastEventAt = null;
+  activeRunModel = null;
 }
 
 function accountLabel(): string {
@@ -535,6 +590,8 @@ function clearPolling() {
 function reconnectActiveRun(): void {
   for (const runId of state.activeRunIds) streamRun(runId);
   state.isWorking = state.activeRunIds.length > 0;
+  if (!state.isWorking) clearActiveRunStatus();
+  updateTelemetry();
 }
 
 function closeActiveSources(): void {
@@ -561,6 +618,9 @@ interface StoredSession {
   promptRuns: number;
   activeRunIds: string[];
   isWorking: boolean;
+  activeRunStartedAt: number | null;
+  activeRunLastEventAt: number | null;
+  activeRunModel: string | null;
   pose: CameraPose | null;
 }
 
@@ -578,6 +638,9 @@ function loadStoredSession(): StoredSession {
           ? [(parsed as { activeRunId: string }).activeRunId]
           : [],
       isWorking: Boolean(parsed.isWorking),
+      activeRunStartedAt: typeof parsed.activeRunStartedAt === "number" ? parsed.activeRunStartedAt : null,
+      activeRunLastEventAt: typeof parsed.activeRunLastEventAt === "number" ? parsed.activeRunLastEventAt : null,
+      activeRunModel: typeof parsed.activeRunModel === "string" ? parsed.activeRunModel : null,
       pose: isCameraPose(parsed.pose) ? parsed.pose : null,
     };
   } catch {
@@ -592,6 +655,9 @@ function persistSessionState(): void {
       promptRuns: state.promptRuns,
       activeRunIds: state.activeRunIds,
       isWorking: state.isWorking,
+      activeRunStartedAt,
+      activeRunLastEventAt,
+      activeRunModel,
       pose: renderer?.pose() ?? loadStoredSession().pose,
     };
     sessionStorage.setItem(sessionStateKey, JSON.stringify(payload));
@@ -605,7 +671,16 @@ function clearStoredSession(): void {
 }
 
 function emptyStoredSession(): StoredSession {
-  return { logs: [], promptRuns: 0, activeRunIds: [], isWorking: false, pose: null };
+  return {
+    logs: [],
+    promptRuns: 0,
+    activeRunIds: [],
+    isWorking: false,
+    activeRunStartedAt: null,
+    activeRunLastEventAt: null,
+    activeRunModel: null,
+    pose: null,
+  };
 }
 
 function isCameraPose(value: unknown): value is CameraPose {
