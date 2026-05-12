@@ -130,6 +130,7 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(completed.body.user.authMode).toBe("chatgpt");
     expect(completed.body.user).not.toHaveProperty("isArchitectConfigured");
     const sessionCookie = completed.headers["set-cookie"];
+    expect(sessionCookie).toContain("roomscape_device=");
 
     const usage = await request<{ usage: CodexRateLimitsResult }>(handler, "GET", "/api/usage", undefined, sessionCookie);
     expect(usage.body.usage.rateLimits?.primary?.usedPercent).toBe(25);
@@ -148,6 +149,30 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(loaded.body.room.config.name).toBe("Saved scene");
     await expect(readFile(path.join(roomRoot, "roomConfig.ts"), "utf8")).resolves.toContain('name": "Saved scene"');
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
+  });
+
+  it("can restore a signed-out browser session without requesting a fresh device code", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-remembered-"));
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+
+    codex.completedLoginIds.add("login-1");
+    codex.account = { accountId: "acct-chatgpt", codexAuthRef: "auth-a", email: "designer@example.com" };
+    const completed = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const cookies = completed.headers["set-cookie"];
+    await request<{ ok: boolean }>(handler, "POST", "/api/auth/logout", undefined, cookies);
+
+    codex.account = null;
+    const restored = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/existing", undefined, cookies);
+    expect(restored.body.status).toBe("authenticated");
+    expect(restored.body.user.authMode).toBe("chatgpt");
+    expect(restored.headers["set-cookie"]).toContain("roomscape_session=");
   });
 
   it("returns device-code login details for hosted ChatGPT auth", async () => {
@@ -350,8 +375,11 @@ async function request<T>(handler: AppHandler, method: string, url: string, body
   let payload = "";
   const res = {
     statusCode: 200,
-    setHeader(name: string, value: string) {
-      headers[name.toLowerCase()] = value;
+    getHeader(name: string) {
+      return headers[name.toLowerCase()];
+    },
+    setHeader(name: string, value: string | string[]) {
+      headers[name.toLowerCase()] = Array.isArray(value) ? value.join("; ") : value;
     },
     end(chunk?: string) {
       payload += chunk ?? "";

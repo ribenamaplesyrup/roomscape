@@ -79,6 +79,8 @@ Some ChatGPT accounts require enabling device-code authorization for Codex in Ch
 
 Completed hosted logins are stored under a per-user Codex auth reference in `ROOMSCAPE_CODEX_AUTH_DIR`, defaulting to `${ROOMSCAPE_DATA_DIR}/codex-auth`. Agent runs receive that user's `CODEX_HOME`, so Codex SDK edits are not powered by a single global Railway account.
 
+Roomscape also sets an HTTP-only remembered-device cookie after a successful ChatGPT login. Signing out clears the app session but keeps that local browser link, so signing back in from the same browser can recreate the Roomscape session without asking OpenAI for another device code. This avoids avoidable device-code issuance failures and keeps the remembered link bound to a random server-stored token.
+
 Key environment variables:
 
 - `ROOMSCAPE_DATA_DIR=/data`

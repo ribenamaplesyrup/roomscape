@@ -18,10 +18,28 @@ interface SessionCookieOptions {
 
 export function setSessionCookie(res: ServerResponse, sessionId: string, options: SessionCookieOptions = {}): void {
   const secure = options.secure ? "; Secure" : "";
-  res.setHeader("Set-Cookie", `roomscape_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`);
+  appendCookie(res, `roomscape_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`);
 }
 
 export function clearSessionCookie(res: ServerResponse, options: SessionCookieOptions = {}): void {
   const secure = options.secure ? "; Secure" : "";
-  res.setHeader("Set-Cookie", `roomscape_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+  appendCookie(res, `roomscape_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+}
+
+export function setRememberedDeviceCookie(res: ServerResponse, token: string, options: SessionCookieOptions = {}): void {
+  const secure = options.secure ? "; Secure" : "";
+  appendCookie(res, `roomscape_device=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=7776000${secure}`);
+}
+
+function appendCookie(res: ServerResponse, cookie: string): void {
+  const current = res.getHeader("Set-Cookie");
+  if (!current) {
+    res.setHeader("Set-Cookie", cookie);
+    return;
+  }
+  if (Array.isArray(current)) {
+    res.setHeader("Set-Cookie", [...current.map(String), cookie]);
+    return;
+  }
+  res.setHeader("Set-Cookie", [String(current), cookie]);
 }

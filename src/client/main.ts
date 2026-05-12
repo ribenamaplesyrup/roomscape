@@ -92,25 +92,22 @@ function renderLanding() {
 async function startChatGptAuth() {
   const button = document.querySelector<HTMLButtonElement>("#chatgpt-login")!;
   const errorTarget = document.querySelector<HTMLElement>("#auth-error")!;
+  button.disabled = true;
+  button.textContent = "Checking ChatGPT...";
+  errorTarget.textContent = "";
+  errorTarget.hidden = true;
+  const remembered = await authenticateExistingChatGptSession();
+  if (remembered) return;
+
   chatGptAuthWindow = window.open("about:blank", "roomscape-chatgpt-login", "popup,width=520,height=720");
   if (!chatGptAuthWindow) {
-    button.disabled = true;
-    button.textContent = "Checking ChatGPT...";
-    errorTarget.textContent = "";
-    errorTarget.hidden = true;
-    const authenticated = await authenticateExistingChatGptSession();
-    if (!authenticated) {
-      button.disabled = false;
-      button.textContent = "Sign in with ChatGPT";
-      errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
-      errorTarget.hidden = false;
-    }
+    button.disabled = false;
+    button.textContent = "Sign in with ChatGPT";
+    errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
+    errorTarget.hidden = false;
     return;
   }
   clearPolling();
-  button.disabled = true;
-  errorTarget.textContent = "";
-  errorTarget.hidden = true;
   try {
     const login = await api<ChatGptLoginStart>("/api/auth/chatgpt/start", { method: "POST" });
     if (login.type === "chatgptDeviceCode") {

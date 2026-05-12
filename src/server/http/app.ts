@@ -11,7 +11,7 @@ import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/a
 import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
-import { readCookie, setSessionCookie, clearSessionCookie } from "./cookies";
+import { readCookie, setRememberedDeviceCookie, setSessionCookie, clearSessionCookie } from "./cookies";
 import { readJson, sendJson } from "./json";
 
 interface AppDeps {
@@ -109,10 +109,17 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       }
       const result = await auth.authenticateWithChatGpt(account);
       setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
+      setRememberedDeviceCookie(res, result.rememberToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/existing") {
+      const remembered = await auth.authenticateWithRememberedDevice(readCookie(req, "roomscape_device"));
+      if (remembered) {
+        setSessionCookie(res, remembered.sessionId, { secure: isSecureRequest(req) });
+        sendJson(res, 200, { status: "authenticated", user: remembered.user });
+        return;
+      }
       const bridge = requireCodexBridge(codex);
       const account = await mapCodexErrors(() => bridge.readChatGptAccount());
       if (!account) {
@@ -121,6 +128,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       }
       const result = await auth.authenticateWithChatGpt(account);
       setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
+      setRememberedDeviceCookie(res, result.rememberToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
