@@ -12,6 +12,11 @@ interface CodexThreadFactory {
   startThread(options: ThreadOptions): CodexThread;
 }
 
+interface SceneEditPhase {
+  title: string;
+  prompt: string;
+}
+
 export interface CodexSdkArchitectRunnerOptions {
   codex?: CodexThreadFactory;
   maxRepairAttempts?: number;
@@ -39,6 +44,10 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
       const currentScene = await this.roomCode.readRawScene();
       const lastGoodScene = await this.roomCode.readRawActiveScene();
       throwIfAborted(input.signal);
+      const phases = planSceneEditPhases(input.prompt);
+      if (phases.length > 1) {
+        emit(log(`Split broad room edit into ${phases.length} incremental phases: ${phases.map((phase) => phase.title).join(" -> ")}.`));
+      }
 
       const thread = this.codex.startThread({
         model: input.model,
@@ -48,15 +57,30 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         approvalPolicy: "never",
         networkAccessEnabled: false,
       });
-      const initialTurn = await thread.runStreamed(buildArchitectPrompt(input, currentScene), turnOptions(input.signal));
-      if (await this.streamTurn(initialTurn.events, emit, input.signal)) return;
-      throwIfAborted(input.signal);
 
-      const sceneSource = await this.validateOrRepairScene(thread, input, emit, currentScene, lastGoodScene);
-      if (!sceneSource) return;
-      throwIfAborted(input.signal);
-      await this.roomCode.writeActiveSceneSource(sceneSource);
-      emit({ type: "scene-updated", at: new Date().toISOString() });
+      let phaseStartScene = currentScene;
+      let lastPromotedScene = lastGoodScene;
+      for (let index = 0; index < phases.length; index += 1) {
+        const phase = phases[index]!;
+        const phaseInput = { ...input, prompt: phase.prompt };
+        if (phases.length > 1) {
+          emit(log(`Phase ${index + 1}/${phases.length}: ${phase.title}.`));
+        }
+        const turn = await thread.runStreamed(buildArchitectPrompt(phaseInput, phaseStartScene), turnOptions(input.signal));
+        if (await this.streamTurn(turn.events, emit, input.signal)) return;
+        throwIfAborted(input.signal);
+
+        const sceneSource = await this.validateOrRepairScene(thread, phaseInput, emit, phaseStartScene, lastPromotedScene, input.prompt);
+        if (!sceneSource) return;
+        throwIfAborted(input.signal);
+        await this.roomCode.writeActiveSceneSource(sceneSource);
+        phaseStartScene = sceneSource;
+        lastPromotedScene = sceneSource;
+        emit({ type: "scene-updated", at: new Date().toISOString() });
+        if (phases.length > 1) {
+          emit(log(`Phase ${index + 1}/${phases.length} promoted to the browser.`));
+        }
+      }
       emit({ type: "complete", runId: input.runId, at: new Date().toISOString() });
     } catch (error) {
       if (error instanceof RunAbortedError) {
@@ -82,6 +106,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     emit: (event: AgentEvent) => void,
     originalScene: string,
     lastGoodScene: string,
+    validationPrompt = input.prompt,
   ): Promise<string | null> {
     for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt += 1) {
       throwIfAborted(input.signal);
@@ -94,7 +119,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
       throwIfAborted(input.signal);
       const validationErrors = [
         ...this.roomCode.validateSceneSource(normalizedSource),
-        ...validateTargetedEditScope(input.prompt, originalScene, normalizedSource),
+        ...validateTargetedEditScope(validationPrompt, originalScene, normalizedSource),
       ];
       if (validationErrors.length === 0) {
         return normalizedSource;
@@ -203,6 +228,74 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "User request:",
     input.prompt,
   ].join("\n");
+}
+
+function planSceneEditPhases(prompt: string): SceneEditPhase[] {
+  const trimmed = prompt.trim();
+  const lower = trimmed.toLowerCase();
+  if (!isBroadSceneRequest(lower)) {
+    return [{ title: "Scene edit", prompt: trimmed }];
+  }
+
+  const phaseCount = broadSceneFeatureCount(lower) >= 6 ? 3 : 2;
+  const phases: SceneEditPhase[] = [
+    {
+      title: "Fast navigable blockout",
+      prompt: [
+        `Original user request: ${trimmed}`,
+        "",
+        "Phase 1: create a fast, complete, navigable blockout of the requested room.",
+        "Prioritize the large layout, walkable floor, walls/openings, ceiling height, major silhouettes, and clear focal zones.",
+        "Use simple but recognizable placeholder geometry for requested objects and decorative areas.",
+        "Do not spend this phase on tiny ornament, dense repeated detail, or polish; the browser should get a usable first draft quickly.",
+      ].join("\n"),
+    },
+    {
+      title: "Requested details",
+      prompt: [
+        `Original user request: ${trimmed}`,
+        "",
+        "Phase 2: continue from the current validated blockout in roomScene.ts.",
+        "Add the most important requested details, materials, lighting, and object anatomy while preserving the walkable layout.",
+        "Keep the scope incremental: improve the existing scene instead of replacing it wholesale.",
+      ].join("\n"),
+    },
+  ];
+
+  if (phaseCount === 3) {
+    phases.push({
+      title: "Lighting and polish",
+      prompt: [
+        `Original user request: ${trimmed}`,
+        "",
+        "Phase 3: polish the current validated scene without redesigning it.",
+        "Balance lighting, atmosphere, material readability, surface texture, and a few small high-impact details.",
+        "Preserve performance and navigation; do not restart the room from scratch.",
+      ].join("\n"),
+    });
+  }
+
+  return phases;
+}
+
+function isBroadSceneRequest(prompt: string): boolean {
+  if (prompt.length < 180) return false;
+  const lower = prompt.toLowerCase();
+  const broadVerb = /\b(transform|design|build|create|make|turn|replace|convert)\b/.test(lower);
+  return broadVerb && broadSceneFeatureCount(lower) >= 4;
+}
+
+function broadSceneFeatureCount(prompt: string): number {
+  const featurePatterns = [
+    /\b(room|interior|space|environment|world|scene|church|cathedral|chapel|hall|nave|apse)\b/,
+    /\b(layout|walkable|aisle|side aisle|corridor|opening|doorway|expanded|long|wide|scale)\b/,
+    /\b(wall|walls|column|columns|arch|arches|vault|vaulted|ceiling|ribbed|window|windows)\b/,
+    /\b(pew|pews|altar|furniture|statue|table|chair|sofa|object|objects)\b/,
+    /\b(material|texture|stone|wood|glass|stained|procedural|surface|color|grain)\b/,
+    /\b(light|lighting|candle|candles|glow|fog|atmosphere|shadow|volumetric)\b/,
+    /\b(animated|animation|flicker|pulse|shimmer|movement)\b/,
+  ];
+  return featurePatterns.filter((pattern) => pattern.test(prompt)).length;
 }
 
 function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, validationErrors: string[]): string {

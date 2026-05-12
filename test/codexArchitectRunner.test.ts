@@ -317,6 +317,43 @@ describe("Codex SDK architect runner", () => {
     expect(promoted).toContain('color: "#f1eee8"');
   });
 
+  it("breaks broad room requests into promoted incremental phases", async () => {
+    const root = await mkRoomRoot();
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeRoomScene(root, "Church blockout"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeRoomScene(root, "Church details"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeRoomScene(root, "Church polish"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+    const prompt = [
+      "Transform the active room into an ambitious, walkable Gothic church interior.",
+      "Include a long nave with side aisles, tall stone columns, ribbed vaulted ceiling, pointed arches, an altar and apse,",
+      "rows of pews, procedural stained-glass windows, candles, warm lighting, foggy atmosphere, and real walkable gaps.",
+    ].join(" ");
+
+    await runner.run(runInput({ prompt, currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(3);
+    expect(codex.thread.prompts[0]).toContain("Phase 1: create a fast");
+    expect(codex.thread.prompts[1]).toContain("Phase 2: continue from the current validated blockout");
+    expect(codex.thread.prompts[2]).toContain("Phase 3: polish");
+    expect(events.filter((event) => event.type === "scene-updated")).toHaveLength(3);
+    expect(events.some((event) => event.type === "log" && event.message.includes("Split broad room edit into 3 incremental phases"))).toBe(true);
+    expect(events.some((event) => event.type === "log" && event.message.includes("Phase 1/3 promoted"))).toBe(true);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Church polish");
+    expect(events.at(-1)).toMatchObject({ type: "complete" });
+  });
+
   it("allows furniture edits to add object geometry without treating it as layout drift", async () => {
     const root = await mkRoomRoot();
     const originalScene = targetedSceneSource({
