@@ -68,11 +68,6 @@ export class CodexAppServerClient implements CodexAuthBridge {
 
   /** Polls the Codex auth state and consumes login-completed notifications when available. */
   public async completeChatGptLogin(loginId: string): Promise<CodexChatGptAccount | null> {
-    const existingAccount = await this.readChatGptAccount();
-    if (existingAccount) {
-      return existingAccount;
-    }
-
     const completion = await this.waitForLoginCompletion(loginId, 1_500);
     if (!completion) {
       return null;

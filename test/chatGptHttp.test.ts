@@ -12,15 +12,16 @@ import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from
 
 class FakeCodexBridge implements CodexAuthBridge {
   public account: CodexChatGptAccount | null = null;
+  public completedLoginIds = new Set<string>();
 
   /** Starts a deterministic fake login for the HTTP integration test. */
   public async startChatGptLogin() {
     return { loginId: "login-1", authUrl: "https://chatgpt.com/auth" };
   }
 
-  /** Completes when the test has supplied a fake Codex ChatGPT account. */
-  public async completeChatGptLogin(): Promise<CodexChatGptAccount | null> {
-    return this.account;
+  /** Completes only after the requested login id has been marked completed. */
+  public async completeChatGptLogin(loginId: string): Promise<CodexChatGptAccount | null> {
+    return this.completedLoginIds.has(loginId) ? this.account : null;
   }
 
   /** Returns a stable usage bucket shaped like the Codex app-server response. */
@@ -62,6 +63,10 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(pending.body.status).toBe("pending");
 
     codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
+    const stillPending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    expect(stillPending.body.status).toBe("pending");
+
+    codex.completedLoginIds.add("login-1");
     const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
     expect(completed.body.status).toBe("authenticated");
     expect(completed.body.user.authMode).toBe("chatgpt");
@@ -88,6 +93,7 @@ describe("ChatGPT auth HTTP flow", () => {
   it("cancels active and queued room edits when requested, reset, or the user signs out", async () => {
     const codex = new FakeCodexBridge();
     codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
+    codex.completedLoginIds.add("login-1");
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-runs-"));
     const runner = new HangingRunner();
     const handler = createApp({
