@@ -306,28 +306,28 @@ function planSceneEditPhases(prompt: string): SceneEditPhase[] {
 function isBroadSceneRequest(prompt: string): boolean {
   if (prompt.length < 180) return false;
   const lower = prompt.toLowerCase();
-  const broadVerb = /\b(transform|design|build|create|make|turn|replace|convert)\b/.test(lower);
+  const broadVerb = /\b(transform|design|build|create|make|turn|replace|convert|rebuild|remake|rework|reimagine)\b/.test(lower);
   return broadVerb && broadSceneFeatureCount(lower) >= 4;
 }
 
 function isCompactSceneReplacementRequest(prompt: string): boolean {
   const lower = prompt.toLowerCase();
-  const sceneNoun = /\b(room|interior|space|environment|world|scene|demo|observatory|sanctuary|backrooms|museum|gallery|garden|greenhouse|church|cathedral|chapel|corridor|hall)\b/;
+  const sceneNoun = /\b(room|interior|space|environment|world|scene|demo|observatory|sanctuary|backrooms|museum|gallery|garden|greenhouse|glasshouse|conservatory|church|cathedral|chapel|corridor|hall)\b/;
   if (!sceneNoun.test(lower)) return false;
 
-  const createsScene = /\b(create|build|design)\b/.test(lower);
+  const createsScene = /\b(create|build|design|rebuild|remake|rework|reimagine)\b/.test(lower);
   const transformsScene = /\b(transform|turn|convert)\b/.test(lower);
   const replacesScene = /\breplace\b/.test(lower) && /\b(new|whole|entire|scene|room|world|environment|demo)\b/.test(lower);
   if (!createsScene && !transformsScene && !replacesScene) return false;
 
   const featureCount = broadSceneFeatureCount(lower);
-  const explicitNewWorld = /\b(new|demo|world|environment|scene|observatory|sanctuary|backrooms|museum|gallery|greenhouse|church|cathedral|chapel)\b/.test(lower);
+  const explicitNewWorld = /\b(new|demo|world|environment|scene|observatory|sanctuary|backrooms|museum|gallery|greenhouse|glasshouse|conservatory|church|cathedral|chapel)\b/.test(lower);
   return explicitNewWorld || featureCount >= 2;
 }
 
 function broadSceneFeatureCount(prompt: string): number {
   const featurePatterns = [
-    /\b(room|interior|space|environment|world|scene|demo|church|cathedral|chapel|hall|nave|apse|observatory|sanctuary|museum|gallery|greenhouse|backrooms)\b/,
+    /\b(room|interior|space|environment|world|scene|demo|church|cathedral|chapel|hall|nave|apse|observatory|sanctuary|museum|gallery|greenhouse|glasshouse|conservatory|backrooms)\b/,
     /\b(layout|walkable|aisle|side aisle|corridor|opening|doorway|expanded|long|wide|scale)\b/,
     /\b(wall|walls|column|columns|arch|arches|vault|vaulted|ceiling|ribbed|window|windows)\b/,
     /\b(pew|pews|altar|furniture|statue|table|chair|sofa|object|objects)\b/,

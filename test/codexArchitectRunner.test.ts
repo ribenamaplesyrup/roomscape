@@ -490,6 +490,28 @@ describe("Codex SDK architect runner", () => {
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Orbital Observatory");
   });
 
+  it("does not apply narrow targeted validation to rebuild-as-demo prompts", async () => {
+    const root = await mkRoomRoot();
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+      title: "Glasshouse Sanctuary",
+      background: "#f3d9aa",
+      floor: "#6b5f48",
+      wall: "#c6b994",
+      ceiling: "#f5dfba",
+      light: "#ffd9a0",
+    }), "utf8"));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+    const prompt = "Use the current botanical demo as a base. Rebuild it as a compact crafted glasshouse sanctuary with fewer but richer plant clusters, warm daylight, visible skylight, a bench and water basin, subtle leaf motion, clear walkable path, efficient geometry and lights, no hidden blockers.";
+
+    await runner.run(runInput({ prompt, currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "log" && event.message.includes("targeted change"))).toBe(false);
+    expect(events.filter((event) => event.type === "scene-updated")).toHaveLength(1);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Glasshouse Sanctuary");
+  });
+
   it("allows furniture edits to add object geometry without treating it as layout drift", async () => {
     const root = await mkRoomRoot();
     const originalScene = targetedSceneSource({
