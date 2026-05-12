@@ -179,20 +179,35 @@ function renderWorkspace() {
     </main>
   `;
 
+  wireWorkspaceEvents();
   renderer?.dispose();
   renderer = new RoomRenderer(document.querySelector("#room-canvas")!);
-  renderer.applyScene(activeRoomScene);
+  applyActiveScene();
   renderer.start();
   restoreStoredPose();
   startPosePersistence();
   startUsagePolling();
   reconnectActiveRun();
+}
+
+function wireWorkspaceEvents() {
   document.querySelector<HTMLFormElement>("#prompt-form")!.addEventListener("submit", submitPrompt);
   document.querySelector<HTMLButtonElement>("#cancel-edit")!.addEventListener("click", cancelRoomEdit);
   document.querySelector<HTMLButtonElement>("#save-room")!.addEventListener("click", saveRoom);
   document.querySelector<HTMLButtonElement>("#reset-room")!.addEventListener("click", resetRoom);
   document.querySelector<HTMLSelectElement>("#room-loader")!.addEventListener("change", loadRoomSelection);
   document.querySelector<HTMLButtonElement>("#logout")!.addEventListener("click", logout);
+}
+
+function applyActiveScene() {
+  if (!renderer) return;
+  try {
+    renderer.applyScene(activeRoomScene);
+  } catch (error) {
+    state.logs.push(`ERROR: Generated scene failed to render: ${error instanceof Error ? error.message : "Unknown scene error."}`);
+    renderer.applyScene(fallbackRoomScene);
+    updateTelemetry();
+  }
 }
 
 async function logout() {
@@ -216,6 +231,42 @@ async function logout() {
     renderLanding();
   }
 }
+
+const fallbackRoomScene: RoomSceneModule = {
+  roomTitle: "Scene recovery room",
+  buildRoom({ THREE, root, scene }) {
+    scene.background = new THREE.Color("#f1eee8");
+    scene.fog = null;
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshStandardMaterial({ color: "#8a8479", roughness: 1 }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    root.add(floor);
+    const ceiling = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshStandardMaterial({ color: "#f1eee8", roughness: 1 }),
+    );
+    ceiling.position.y = 3;
+    ceiling.rotation.x = Math.PI / 2;
+    root.add(ceiling);
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: "#d7d2c8", roughness: 1 });
+    const wallGeometry = new THREE.PlaneGeometry(10, 3);
+    const walls: Array<[number, number, number, number]> = [
+      [0, 1.5, -5, 0],
+      [0, 1.5, 5, Math.PI],
+      [-5, 1.5, 0, Math.PI / 2],
+      [5, 1.5, 0, -Math.PI / 2],
+    ];
+    for (const [x, y, z, rotationY] of walls) {
+      const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+      wall.position.set(x, y, z);
+      wall.rotation.y = rotationY;
+      root.add(wall);
+    }
+    root.add(new THREE.HemisphereLight("#ffffff", "#555555", 1.2));
+  },
+};
 
 async function submitPrompt(event: SubmitEvent) {
   event.preventDefault();

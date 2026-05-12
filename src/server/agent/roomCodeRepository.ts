@@ -80,9 +80,10 @@ export class RoomCodeRepository {
     if (/new\s+THREE\.WebGLRenderer|new\s+THREE\.PerspectiveCamera|document\.|window\.|fetch\s*\(|setTimeout\s*\(|setInterval\s*\(|requestAnimationFrame\s*\(/.test(normalizedSource)) {
       errors.push("roomScene.ts must not create renderers/cameras, touch DOM/window, perform network calls, or start timers.");
     }
-    if (/:\s*THREE\./.test(normalizedSource)) {
+    if (/:\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*(?:=>|[=,);{]))/.test(normalizedSource)) {
       errors.push("roomScene.ts must not use THREE.* namespace type annotations; let local Three.js values infer their types.");
     }
+    errors.push(...findUnsafeShorthandProperties(normalizedSource));
     const diagnostics = ts.transpileModule(normalizedSource, {
       compilerOptions: {
         isolatedModules: true,
@@ -143,6 +144,39 @@ export class RoomCodeRepository {
     }
     return decision.normalizedPath;
   }
+}
+
+function findUnsafeShorthandProperties(source: string): string[] {
+  const file = ts.createSourceFile("roomScene.ts", source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const declared = new Set<string>();
+  const unsafe: string[] = [];
+
+  const rememberBindingName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      declared.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) rememberBindingName(element.name);
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportSpecifier(node) || ts.isImportClause(node) && node.name) {
+      if ("name" in node && node.name) declared.add(node.name.text);
+    }
+    if (ts.isFunctionDeclaration(node) && node.name) declared.add(node.name.text);
+    if (ts.isFunctionExpression(node) && node.name) declared.add(node.name.text);
+    if (ts.isParameter(node)) rememberBindingName(node.name);
+    if (ts.isVariableDeclaration(node)) rememberBindingName(node.name);
+    if (ts.isShorthandPropertyAssignment(node) && !declared.has(node.name.text)) {
+      unsafe.push(`roomScene.ts uses shorthand property '${node.name.text}' without declaring it; write an explicit value such as ${node.name.text}: THREE.DoubleSide.`);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(file);
+  return unsafe;
 }
 
 function freshSceneSource(): string {

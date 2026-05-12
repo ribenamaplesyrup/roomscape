@@ -412,6 +412,50 @@ describe("Codex SDK architect runner", () => {
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.not.toContain(": THREE.DataTexture");
   });
 
+  it("repairs scene code with undeclared shorthand material properties before promoting", async () => {
+    const root = await mkRoomRoot();
+    await writeActiveRoomScene(root, "Still valid");
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), [
+          'import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";',
+          "",
+          'export const roomTitle = "Bad shorthand";',
+          "",
+          "export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {",
+          "  scene.background = new THREE.Color('#ffffff');",
+          "  root.add(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', side })));",
+          "}",
+          "",
+        ].join("\n"), "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), [
+          'import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";',
+          "",
+          'export const roomTitle = "Repaired shorthand";',
+          "",
+          "export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {",
+          "  scene.background = new THREE.Color('#ffffff');",
+          "  root.add(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide })));",
+          "}",
+          "",
+        ].join("\n"), "utf8"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Make the panel double-sided", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(2);
+    expect(codex.thread.prompts[1]).toContain("shorthand property 'side'");
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("side: THREE.DoubleSide");
+  });
+
   it("halts with a permission request when Codex proposes a file outside the active room", async () => {
     const root = await mkRoomRoot();
     const codex = new FakeCodex([fileChange("../escape.ts"), completed()]);
