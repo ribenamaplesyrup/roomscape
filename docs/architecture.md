@@ -20,7 +20,7 @@ The deterministic runner remains available as a test double for fast UI and poli
 
 ## Authentication
 
-Roomscape does not maintain a separate username/password account and does not ask users for API keys. Users authenticate with their ChatGPT account through Codex-managed OAuth. Roomscape stores a local user record keyed by a fingerprint of the Codex ChatGPT account id, then asks the user to define an Architect name and description before entering the room.
+Roomscape does not maintain a separate username/password account and does not ask users for API keys. Users authenticate with their ChatGPT account through Codex-managed OAuth. Roomscape stores a local user record keyed by a fingerprint of the Codex ChatGPT account id, then takes the user directly into the room workspace.
 
 ## Permission Flow
 
