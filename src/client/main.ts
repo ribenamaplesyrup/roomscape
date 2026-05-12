@@ -1,5 +1,5 @@
 import "./styles/app.css";
-import type { AgentEvent, PublicUser, SavedRoom } from "../shared/api";
+import type { AgentEvent, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
 import { modelOptions } from "../shared/models";
 import type { RoomConfig } from "../shared/room";
 import { roomConfig } from "../../sandbox/rooms/active/roomConfig";
@@ -13,6 +13,7 @@ interface ClientState {
   logs: string[];
   totalCost: number;
   promptRuns: number;
+  chatGptUsage: string | null;
   rooms: SavedRoom[];
 }
 
@@ -22,10 +23,13 @@ const state: ClientState = {
   logs: [],
   totalCost: 0,
   promptRuns: 0,
+  chatGptUsage: null,
   rooms: [],
 };
 
 let renderer: RoomRenderer | null = null;
+let chatGptPoll: number | undefined;
+let usagePoll: number | undefined;
 
 void boot();
 
@@ -45,6 +49,7 @@ async function boot() {
 }
 
 function renderLanding() {
+  clearPolling();
   renderer?.dispose();
   app.innerHTML = `
     <main class="landing-shell">
@@ -69,33 +74,48 @@ function renderChatGptAuth() {
           <h1>Connect your ChatGPT account.</h1>
         </div>
         <button id="chatgpt-login" type="button">Continue with ChatGPT</button>
-        <p id="chatgpt-note" class="form-note">ChatGPT managed auth will use Codex OAuth when the local auth bridge is wired.</p>
-        <details class="dev-fallback">
-          <summary>Developer API key fallback</summary>
-        <form id="openai-form" class="auth-form">
-          <input name="openAiKey" placeholder="OpenAI API key" type="password" autocomplete="off" required />
-          <button type="submit">Continue</button>
-        </form>
-        </details>
+        <p id="chatgpt-note" class="form-note">Roomscape uses Codex managed OAuth for ChatGPT accounts.</p>
+        <a id="chatgpt-auth-link" class="auth-link" target="_blank" rel="noreferrer" hidden>Open ChatGPT sign-in</a>
+        <button id="chatgpt-finish" class="quiet-button" type="button" hidden>I finished signing in</button>
         <p id="auth-error" class="form-error"></p>
       </section>
     </main>
   `;
   document.querySelector<HTMLButtonElement>("#back-home")!.addEventListener("click", renderLanding);
-  document.querySelector<HTMLButtonElement>("#chatgpt-login")!.addEventListener("click", showPendingChatGptAuth);
-  document.querySelector<HTMLFormElement>("#openai-form")!.addEventListener("submit", submitOpenAiAuth);
+  document.querySelector<HTMLButtonElement>("#chatgpt-login")!.addEventListener("click", startChatGptAuth);
 }
 
-function showPendingChatGptAuth() {
-  document.querySelector("#auth-error")!.textContent = "ChatGPT login is the primary path, but the Codex managed-auth bridge is not wired in this local app yet. Use the developer API key fallback for now.";
-}
-
-async function submitOpenAiAuth(event: SubmitEvent) {
-  event.preventDefault();
-  const form = event.currentTarget as HTMLFormElement;
-  const body = Object.fromEntries(new FormData(form).entries());
+async function startChatGptAuth() {
+  const button = document.querySelector<HTMLButtonElement>("#chatgpt-login")!;
+  const note = document.querySelector<HTMLElement>("#chatgpt-note")!;
+  const link = document.querySelector<HTMLAnchorElement>("#chatgpt-auth-link")!;
+  const finish = document.querySelector<HTMLButtonElement>("#chatgpt-finish")!;
+  button.disabled = true;
+  note.textContent = "Starting Codex ChatGPT OAuth...";
   try {
-    const result = await api<{ user: PublicUser }>("/api/auth/openai", { method: "POST", body });
+    const login = await api<ChatGptLoginStart>("/api/auth/chatgpt/start", { method: "POST" });
+    link.href = login.authUrl;
+    link.hidden = false;
+    finish.hidden = false;
+    note.textContent = "Open the sign-in page, approve access, then return here.";
+    finish.onclick = () => void completeChatGptAuth(login.loginId);
+    chatGptPoll = window.setInterval(() => void completeChatGptAuth(login.loginId, true), 2_500);
+  } catch (error) {
+    button.disabled = false;
+    document.querySelector("#auth-error")!.textContent = error instanceof Error ? error.message : "Unable to start ChatGPT login.";
+  }
+}
+
+async function completeChatGptAuth(loginId: string, quiet = false) {
+  const note = document.querySelector<HTMLElement>("#chatgpt-note");
+  if (!quiet && note) note.textContent = "Checking ChatGPT login...";
+  try {
+    const result = await api<ChatGptAuthStatus>("/api/auth/chatgpt/complete", { method: "POST", body: { loginId } });
+    if (result.status !== "authenticated" || !result.user) {
+      if (!quiet && note) note.textContent = "Still waiting for ChatGPT approval.";
+      return;
+    }
+    clearPolling();
     state.user = result.user;
     if (result.user.isArchitectConfigured) {
       await loadRooms();
@@ -104,7 +124,10 @@ async function submitOpenAiAuth(event: SubmitEvent) {
       renderArchitectSetup();
     }
   } catch (error) {
-    document.querySelector("#auth-error")!.textContent = error instanceof Error ? error.message : "Unable to authenticate.";
+    clearPolling();
+    document.querySelector("#auth-error")!.textContent = error instanceof Error ? error.message : "Unable to complete ChatGPT login.";
+    const button = document.querySelector<HTMLButtonElement>("#chatgpt-login");
+    if (button) button.disabled = false;
   }
 }
 
@@ -141,6 +164,7 @@ async function submitArchitect(event: SubmitEvent) {
 }
 
 function renderWorkspace() {
+  clearPolling();
   app.innerHTML = `
     <main class="workspace">
       <div id="room-canvas" class="room-canvas"></div>
@@ -176,6 +200,7 @@ function renderWorkspace() {
   renderer = new RoomRenderer(document.querySelector("#room-canvas")!);
   renderer.applyConfig(state.config);
   renderer.start();
+  startUsagePolling();
   document.querySelector<HTMLFormElement>("#prompt-form")!.addEventListener("submit", submitPrompt);
   document.querySelector<HTMLButtonElement>("#save-room")!.addEventListener("click", saveRoom);
   document.querySelector<HTMLSelectElement>("#room-loader")!.addEventListener("change", loadRoomSelection);
@@ -260,9 +285,39 @@ function accountLabel(): string {
 function sessionUsageLabel(): string {
   if (state.user?.authMode === "chatgpt") {
     const plan = state.user.planType ? `${state.user.planType} plan` : "ChatGPT";
-    return `${state.promptRuns} runs | ${plan}`;
+    return `${state.promptRuns} runs | ${state.chatGptUsage ?? plan}`;
   }
   return `${state.promptRuns} runs | $${state.totalCost.toFixed(4)}`;
+}
+
+function startUsagePolling() {
+  if (state.user?.authMode !== "chatgpt") return;
+  void refreshUsage();
+  usagePoll = window.setInterval(() => void refreshUsage(), 30_000);
+}
+
+async function refreshUsage() {
+  try {
+    const result = await api<{ usage: ChatGptUsage | null }>("/api/usage");
+    state.chatGptUsage = result.usage ? formatChatGptUsage(result.usage) : null;
+    updateTelemetry();
+  } catch {
+    state.chatGptUsage = "usage unavailable";
+    updateTelemetry();
+  }
+}
+
+function formatChatGptUsage(usage: ChatGptUsage): string {
+  const bucket = usage.rateLimits ?? Object.values(usage.rateLimitsByLimitId ?? {})[0];
+  if (!bucket?.primary) return "ChatGPT usage active";
+  return `${bucket.primary.usedPercent}% of ${bucket.limitName ?? bucket.limitId} window`;
+}
+
+function clearPolling() {
+  if (chatGptPoll) window.clearInterval(chatGptPoll);
+  if (usagePoll) window.clearInterval(usagePoll);
+  chatGptPoll = undefined;
+  usagePoll = undefined;
 }
 
 async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {

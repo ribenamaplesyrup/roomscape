@@ -110,14 +110,8 @@ h1 {
   line-height: 1.45;
 }
 
-.dev-fallback {
-  display: grid;
-  gap: 12px;
-  color: #c5ccc2;
-}
-
-.dev-fallback summary {
-  cursor: pointer;
+.auth-link {
+  color: #d6f36f;
 }
 
 .room-canvas {

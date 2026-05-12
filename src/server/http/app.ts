@@ -6,6 +6,7 @@ import type { ViteDevServer } from "vite";
 import { emptyRoomConfig, type RoomConfig } from "../../shared/room";
 import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
+import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/appServerClient";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
 import { readCookie, setSessionCookie, clearSessionCookie } from "./cookies";
@@ -15,11 +16,12 @@ interface AppDeps {
   store: DataStore;
   runner: ArchitectRunner;
   bus: AgentRunBus;
+  codex?: CodexAuthBridge;
   vite?: ViteDevServer;
   staticRoot?: string;
 }
 
-export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
+export function createApp({ store, runner, bus, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
   let activeConfig: RoomConfig = {
@@ -50,6 +52,10 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
       res.statusCode = 404;
       res.end("Not found");
     } catch (error) {
+      if (error instanceof HttpError) {
+        sendJson(res, error.status, { error: error.message });
+        return;
+      }
       sendJson(res, 500, { error: error instanceof Error ? error.message : "Unknown server error." });
     }
   };
@@ -61,12 +67,6 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
   }
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-    if (req.method === "POST" && url.pathname === "/api/auth/openai") {
-      const result = await auth.authenticateWithOpenAi(await readJson(req));
-      setSessionCookie(res, result.sessionId);
-      sendJson(res, 200, { user: result.user });
-      return;
-    }
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
       await auth.logout(readCookie(req, "roomscape_session"));
       clearSessionCookie(res);
@@ -77,8 +77,36 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
       sendJson(res, 200, { user: await auth.userForSession(readCookie(req, "roomscape_session")) });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/start") {
+      const bridge = requireCodexBridge(codex);
+      const login = await mapCodexErrors(() => bridge.startChatGptLogin());
+      sendJson(res, 200, { loginId: login.loginId, authUrl: login.authUrl });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/complete") {
+      const bridge = requireCodexBridge(codex);
+      const body = await readJson<{ loginId: string }>(req);
+      if (!body.loginId?.trim()) throw new HttpError(400, "ChatGPT login id is required.");
+      const account = await mapCodexErrors(() => bridge.completeChatGptLogin(body.loginId));
+      if (!account) {
+        sendJson(res, 202, { status: "pending" });
+        return;
+      }
+      const result = await auth.authenticateWithChatGpt(account);
+      setSessionCookie(res, result.sessionId);
+      sendJson(res, 200, { status: "authenticated", user: result.user });
+      return;
+    }
 
     const user = await requireUser(req);
+    if (req.method === "GET" && url.pathname === "/api/usage") {
+      if (user.authMode !== "chatgpt" || !codex) {
+        sendJson(res, 200, { usage: null });
+        return;
+      }
+      sendJson(res, 200, { usage: await mapCodexErrors(() => codex.readRateLimits()) });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/architect") {
       sendJson(res, 200, { user: await auth.updateArchitectProfile(readCookie(req, "roomscape_session"), await readJson(req)) });
       return;
@@ -140,6 +168,24 @@ export function createApp({ store, runner, bus, vite, staticRoot }: AppDeps) {
     }
 
     throw new HttpError(404, `No route for ${req.method} ${url.pathname}`);
+  }
+}
+
+function requireCodexBridge(codex: CodexAuthBridge | undefined): CodexAuthBridge {
+  if (!codex) {
+    throw new HttpError(503, "Codex app-server bridge is not available.");
+  }
+  return codex;
+}
+
+async function mapCodexErrors<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof CodexAppServerUnavailableError) {
+      throw new HttpError(503, "Codex is not available. Install or sign in to Codex, then try again.");
+    }
+    throw error;
   }
 }
 

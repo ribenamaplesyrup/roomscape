@@ -1,0 +1,103 @@
+import { Readable } from "node:stream";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { describe, expect, it } from "vitest";
+import { AgentRunBus, type ArchitectRunner } from "../src/server/agent/architectRunner";
+import { createApp } from "../src/server/http/app";
+import { MemoryStore } from "../src/server/storage/memoryStore";
+import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
+
+class FakeCodexBridge implements CodexAuthBridge {
+  public account: CodexChatGptAccount | null = null;
+
+  /** Starts a deterministic fake login for the HTTP integration test. */
+  public async startChatGptLogin() {
+    return { loginId: "login-1", authUrl: "https://chatgpt.com/auth" };
+  }
+
+  /** Completes when the test has supplied a fake Codex ChatGPT account. */
+  public async completeChatGptLogin(): Promise<CodexChatGptAccount | null> {
+    return this.account;
+  }
+
+  /** Returns a stable usage bucket shaped like the Codex app-server response. */
+  public async readRateLimits(): Promise<CodexRateLimitsResult> {
+    return {
+      rateLimits: {
+        limitId: "codex",
+        primary: {
+          usedPercent: 25,
+          windowDurationMins: 300,
+          resetsAt: 1_800_000_000,
+        },
+      },
+    };
+  }
+}
+
+const noopRunner: ArchitectRunner = {
+  async run() {},
+};
+
+describe("ChatGPT auth HTTP flow", () => {
+  it("starts Codex ChatGPT login, creates a session after completion, and exposes usage", async () => {
+    const codex = new FakeCodexBridge();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      codex,
+    });
+
+    const started = await request<{ loginId: string; authUrl: string }>(handler, "POST", "/api/auth/chatgpt/start");
+    expect(started.body).toEqual({ loginId: "login-1", authUrl: "https://chatgpt.com/auth" });
+
+    const pending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    expect(pending.body.status).toBe("pending");
+
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
+    const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    expect(completed.body.status).toBe("authenticated");
+    expect(completed.body.user.authMode).toBe("chatgpt");
+    const sessionCookie = completed.headers["set-cookie"];
+
+    const usage = await request<{ usage: CodexRateLimitsResult }>(handler, "GET", "/api/usage", undefined, sessionCookie);
+    expect(usage.body.usage.rateLimits?.primary?.usedPercent).toBe(25);
+  });
+});
+
+type AppHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+
+interface TestResponse<T> {
+  status: number;
+  headers: Record<string, string>;
+  body: T;
+}
+
+async function request<T>(handler: AppHandler, method: string, url: string, body?: unknown, cookie?: string): Promise<TestResponse<T>> {
+  const req = Readable.from(body ? [JSON.stringify(body)] : []) as IncomingMessage;
+  req.method = method;
+  req.url = url;
+  req.headers = {
+    host: "127.0.0.1",
+    ...(cookie ? { cookie } : {}),
+  };
+
+  const headers: Record<string, string> = {};
+  let payload = "";
+  const res = {
+    statusCode: 200,
+    setHeader(name: string, value: string) {
+      headers[name.toLowerCase()] = value;
+    },
+    end(chunk?: string) {
+      payload += chunk ?? "";
+    },
+  } as unknown as ServerResponse;
+
+  await handler(req, res);
+  return {
+    status: res.statusCode,
+    headers,
+    body: JSON.parse(payload || "{}") as T,
+  };
+}

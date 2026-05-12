@@ -3,28 +3,11 @@ import { AuthService } from "../src/server/auth/service";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 
 describe("auth service", () => {
-  it("requires OpenAI credentials and stores no plaintext credential", async () => {
-    const service = new AuthService(new MemoryStore());
-    await expect(service.authenticateWithOpenAi({
-      openAiKey: "",
-    })).rejects.toThrow("OpenAI credentials");
-
-    const store = new MemoryStore();
-    const authenticated = await new AuthService(store).authenticateWithOpenAi({
-      openAiKey: "sk-test",
-    });
-    const data = await store.read();
-    expect(authenticated.user.openAiAccountLabel).toContain("...test");
-    expect(authenticated.user.authMode).toBe("apiKey");
-    expect(data.users[0]?.encryptedOpenAiKey).not.toContain("sk-test");
-    expect(data.users[0]).not.toHaveProperty("passwordHash");
-  });
-
-  it("prompts for architect profile after OpenAI authentication", async () => {
+  it("prompts for architect profile after ChatGPT authentication", async () => {
     const store = new MemoryStore();
     const service = new AuthService(store);
-    const result = await service.authenticateWithOpenAi({
-      openAiKey: "sk-test",
+    const result = await service.authenticateWithChatGpt({
+      accountId: "acct-chatgpt",
     });
 
     expect(result.user.isArchitectConfigured).toBe(false);
@@ -41,5 +24,26 @@ describe("auth service", () => {
       architectName: "Institutional Gothic",
       isArchitectConfigured: true,
     });
+  });
+
+  it("creates a local session for a Codex-managed ChatGPT account without storing an API key", async () => {
+    const store = new MemoryStore();
+    const service = new AuthService(store);
+    const result = await service.authenticateWithChatGpt({
+      accountId: "acct-chatgpt",
+      email: "designer@example.com",
+      planType: "plus",
+    });
+
+    const data = await store.read();
+    expect(result.user).toMatchObject({
+      authMode: "chatgpt",
+      openAiAccountLabel: "ChatGPT plus designer@example.com",
+      planType: "plus",
+      isArchitectConfigured: false,
+    });
+    expect(data.users[0]).not.toHaveProperty("encryptedOpenAiKey");
+    expect(data.users[0]).not.toHaveProperty("passwordHash");
+    expect(await service.userForSession(result.sessionId)).toEqual(result.user);
   });
 });

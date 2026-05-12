@@ -1,41 +1,44 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PublicUser } from "../../shared/api";
-import { encryptSecret } from "./crypto";
 import type { DataStore, UserRecord } from "../storage/types";
-
-export interface OpenAiAuthInput {
-  openAiKey: string;
-}
 
 export interface ArchitectProfileInput {
   architectName: string;
   architectDescription: string;
 }
 
+export interface ChatGptAuthInput {
+  accountId: string;
+  email?: string;
+  planType?: string;
+}
+
 export class AuthService {
   public constructor(private readonly store: DataStore) {}
 
-  /** Authenticates with an OpenAI credential and creates a local Roomscape session. */
-  public async authenticateWithOpenAi(input: OpenAiAuthInput): Promise<{ user: PublicUser; sessionId: string }> {
-    const openAiKey = input.openAiKey.trim();
-    if (!openAiKey) {
-      throw new Error("OpenAI credentials are required.");
+  /** Creates or refreshes a Roomscape session for a Codex-managed ChatGPT account. */
+  public async authenticateWithChatGpt(input: ChatGptAuthInput): Promise<{ user: PublicUser; sessionId: string }> {
+    const accountId = input.accountId.trim();
+    if (!accountId) {
+      throw new Error("ChatGPT account id is required.");
     }
 
     const data = await this.store.read();
-    const openAiAccountHash = fingerprintOpenAiCredential(openAiKey);
+    const openAiAccountHash = fingerprintCredential(`chatgpt:${accountId}`);
     const now = new Date().toISOString();
     let user = data.users.find((candidate) => candidate.openAiAccountHash === openAiAccountHash);
     if (user) {
-      user.encryptedOpenAiKey = encryptSecret(openAiKey);
+      user.authMode = "chatgpt";
+      user.openAiAccountLabel = labelChatGptAccount(input.email, input.planType);
+      if (input.planType) user.planType = input.planType;
       user.updatedAt = now;
     } else {
       user = {
         id: randomUUID(),
-        authMode: "apiKey",
+        authMode: "chatgpt",
         openAiAccountHash,
-        openAiAccountLabel: labelOpenAiCredential(openAiKey),
-        encryptedOpenAiKey: encryptSecret(openAiKey),
+        openAiAccountLabel: labelChatGptAccount(input.email, input.planType),
+        ...(input.planType ? { planType: input.planType } : {}),
         architectName: "",
         architectDescription: "",
         createdAt: now,
@@ -99,7 +102,7 @@ export function toPublicUser(user: UserRecord): PublicUser {
   const architectDescription = user.architectDescription ?? "";
   return {
     id: user.id,
-    authMode: user.authMode ?? "apiKey",
+    authMode: user.authMode ?? "chatgpt",
     openAiAccountLabel: user.openAiAccountLabel ?? "OpenAI account",
     ...(user.planType ? { planType: user.planType } : {}),
     architectName,
@@ -108,11 +111,11 @@ export function toPublicUser(user: UserRecord): PublicUser {
   };
 }
 
-function fingerprintOpenAiCredential(openAiKey: string): string {
-  return createHash("sha256").update(openAiKey).digest("hex");
+function fingerprintCredential(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
-function labelOpenAiCredential(openAiKey: string): string {
-  const visible = openAiKey.slice(-4).padStart(4, "*");
-  return `API key ...${visible}`;
+function labelChatGptAccount(email: string | undefined, planType: string | undefined): string {
+  const plan = planType ? ` ${planType}` : "";
+  return email ? `ChatGPT${plan} ${email}` : `ChatGPT${plan} account`;
 }

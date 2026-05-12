@@ -7,7 +7,6 @@ export interface UserRecord {
   openAiAccountHash: string;
   openAiAccountLabel: string;
   planType?: string;
-  encryptedOpenAiKey: string;
   architectName: string;
   architectDescription: string;
   createdAt: string;

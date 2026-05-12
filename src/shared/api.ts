@@ -1,6 +1,6 @@
 import type { RoomConfig } from "./room";
 
-export type AuthMode = "chatgpt" | "apiKey";
+export type AuthMode = "chatgpt";
 
 export interface PublicUser {
   id: string;
@@ -39,4 +39,30 @@ export interface PermissionRequest {
 
 export interface AgentRunStart {
   runId: string;
+}
+
+export interface ChatGptLoginStart {
+  loginId: string;
+  authUrl: string;
+}
+
+export interface ChatGptAuthStatus {
+  status: "pending" | "authenticated";
+  user?: PublicUser;
+}
+
+export interface ChatGptUsage {
+  rateLimits?: ChatGptRateLimitBucket;
+  rateLimitsByLimitId?: Record<string, ChatGptRateLimitBucket>;
+}
+
+export interface ChatGptRateLimitBucket {
+  limitId: string;
+  limitName?: string | null;
+  primary?: {
+    usedPercent: number;
+    windowDurationMins: number;
+    resetsAt: number;
+  };
+  rateLimitReachedType?: string | null;
 }
