@@ -15,6 +15,7 @@ Roomscape can run on Railway as a single Node web service, but the current app i
 - `HOST`: optional; defaults to `0.0.0.0`.
 - `ROOMSCAPE_DATA_DIR`: optional directory for the JSON store, for example `/data` when a Railway volume is mounted there.
 - `ROOMSCAPE_DATA_PATH`: optional full path to the JSON store. Takes precedence over `ROOMSCAPE_DATA_DIR`.
+- `DATABASE_URL`: reserved for the upcoming PostgreSQL-backed store. If this is set today, Roomscape fails on startup instead of silently using local JSON storage.
 
 ## Persistent Data
 
@@ -24,7 +25,7 @@ The current branch still uses `JsonStore`. For a single instance, mount a Railwa
 ROOMSCAPE_DATA_DIR=/data
 ```
 
-This keeps `.roomscape/data.json`-style app data outside the container filesystem. This is acceptable for a small private deployment, but it is not the final shape for user-isolated hosted Roomscape.
+This keeps `.roomscape/data.json`-style app data outside the container filesystem. This is acceptable for a small private deployment, but it is not the final shape for user-isolated hosted Roomscape. Do not attach Railway PostgreSQL yet unless the server has a PostgreSQL `DataStore`; the app intentionally fails when `DATABASE_URL` is present so it does not look multi-tenant while still writing JSON.
 
 ## User Isolation
 
@@ -42,6 +43,13 @@ The target production model should be:
 - `active_world_state`: current scene/config for one user and one world.
 
 Every room/world query should include the authenticated user's id, and every agent run should carry `userId`, `worldId`, and `runId`.
+
+## Next Implementation Steps
+
+1. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
+2. Move `activeConfig` out of process memory and into user/world scoped storage.
+3. Replace `sandbox/rooms/active` with temporary per-run workspaces and persisted per-world scene source.
+4. Replace Codex local app-server auth with a web-safe auth provider before public multi-user use.
 
 ## ChatGPT Auth Caveat
 
