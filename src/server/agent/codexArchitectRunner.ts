@@ -15,6 +15,7 @@ interface CodexThreadFactory {
 interface SceneEditPhase {
   title: string;
   prompt: string;
+  targetedValidationPrompt: string | null;
 }
 
 export interface CodexSdkArchitectRunnerOptions {
@@ -32,7 +33,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     options: CodexSdkArchitectRunnerOptions = {},
   ) {
     this.codex = options.codex ?? new Codex();
-    this.maxRepairAttempts = options.maxRepairAttempts ?? 1;
+    this.maxRepairAttempts = options.maxRepairAttempts ?? 2;
   }
 
   /** Streams Codex work logs, validates sandbox file changes, and reloads the generated room config. */
@@ -70,7 +71,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         if (await this.streamTurn(turn.events, emit, input.signal)) return;
         throwIfAborted(input.signal);
 
-        const sceneSource = await this.validateOrRepairScene(thread, phaseInput, emit, phaseStartScene, lastPromotedScene, input.prompt);
+        const sceneSource = await this.validateOrRepairScene(thread, phaseInput, emit, phaseStartScene, lastPromotedScene, phase.targetedValidationPrompt);
         if (!sceneSource) return;
         throwIfAborted(input.signal);
         await this.roomCode.writeActiveSceneSource(sceneSource);
@@ -106,7 +107,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     emit: (event: AgentEvent) => void,
     originalScene: string,
     lastGoodScene: string,
-    validationPrompt = input.prompt,
+    targetedValidationPrompt: string | null = input.prompt,
   ): Promise<string | null> {
     for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt += 1) {
       throwIfAborted(input.signal);
@@ -117,10 +118,10 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         emit(log("Cleaned unsafe Three.js namespace type annotations before validation."));
       }
       throwIfAborted(input.signal);
-      const validationErrors = [
-        ...this.roomCode.validateSceneSource(normalizedSource),
-        ...validateTargetedEditScope(validationPrompt, originalScene, normalizedSource),
-      ];
+      const validationErrors = this.roomCode.validateSceneSource(normalizedSource);
+      if (targetedValidationPrompt) {
+        validationErrors.push(...validateTargetedEditScope(targetedValidationPrompt, originalScene, normalizedSource));
+      }
       if (validationErrors.length === 0) {
         return normalizedSource;
       }
@@ -130,8 +131,8 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         return null;
       }
 
-      emit(log(`Generated scene failed validation. Asking Codex to repair it without changing the user intent.\n${validationErrors.join("\n")}`));
-      const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors), turnOptions(input.signal));
+      emit(log(`Generated scene failed validation. Retrying repair ${attempt + 1}/${this.maxRepairAttempts} with the validation errors in mind.\n${validationErrors.join("\n")}`));
+      const repairTurn = await thread.runStreamed(buildRepairPrompt(input, sceneSource, validationErrors, attempt + 1, this.maxRepairAttempts), turnOptions(input.signal));
       if (await this.streamTurn(repairTurn.events, emit, input.signal)) {
         return null;
       }
@@ -220,6 +221,7 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "For animated requests such as flicker, movement, pulsing, blinking, shimmer, or drift, do not use timers or requestAnimationFrame. Instead set scene.userData.isAnimated = true or root.userData.isAnimated = true, then assign scene.userData.update or root.userData.update to a deterministic function that accepts { time, delta, scene, root } and updates the relevant materials/lights. The host will keep rendering while those animation hooks exist.",
     "Do not fake a floor material with a raised slab unless the user asks for a rug or object.",
     "Optimize for real-time browser use: avoid unbounded loops, huge geometries, external assets, and excessive lights.",
+    "Use live PointLight and SpotLight objects sparingly because they directly affect frame rate. Prefer emissive materials, DataTexture glow cues, AmbientLight/HemisphereLight/DirectionalLight, and a few high-impact local lights over many candle/window point lights.",
     "After editing, summarize the Three.js changes you made.",
     "",
     "Current roomScene.ts:",
@@ -234,7 +236,7 @@ function planSceneEditPhases(prompt: string): SceneEditPhase[] {
   const trimmed = prompt.trim();
   const lower = trimmed.toLowerCase();
   if (!isBroadSceneRequest(lower)) {
-    return [{ title: "Scene edit", prompt: trimmed }];
+    return [{ title: "Scene edit", prompt: trimmed, targetedValidationPrompt: trimmed }];
   }
 
   const phaseCount = broadSceneFeatureCount(lower) >= 6 ? 3 : 2;
@@ -249,6 +251,7 @@ function planSceneEditPhases(prompt: string): SceneEditPhase[] {
         "Use simple but recognizable placeholder geometry for requested objects and decorative areas.",
         "Do not spend this phase on tiny ornament, dense repeated detail, or polish; the browser should get a usable first draft quickly.",
       ].join("\n"),
+      targetedValidationPrompt: null,
     },
     {
       title: "Requested details",
@@ -259,6 +262,7 @@ function planSceneEditPhases(prompt: string): SceneEditPhase[] {
         "Add the most important requested details, materials, lighting, and object anatomy while preserving the walkable layout.",
         "Keep the scope incremental: improve the existing scene instead of replacing it wholesale.",
       ].join("\n"),
+      targetedValidationPrompt: null,
     },
   ];
 
@@ -272,6 +276,7 @@ function planSceneEditPhases(prompt: string): SceneEditPhase[] {
         "Balance lighting, atmosphere, material readability, surface texture, and a few small high-impact details.",
         "Preserve performance and navigation; do not restart the room from scratch.",
       ].join("\n"),
+      targetedValidationPrompt: null,
     });
   }
 
@@ -298,11 +303,13 @@ function broadSceneFeatureCount(prompt: string): number {
   return featurePatterns.filter((pattern) => pattern.test(prompt)).length;
 }
 
-function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, validationErrors: string[]): string {
+function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, validationErrors: string[], repairAttempt: number, maxRepairAttempts: number): string {
   return [
     "Repair ./roomScene.ts so it satisfies validation while still fulfilling the original user request.",
+    `This is repair attempt ${repairAttempt} of ${maxRepairAttempts}. Make the smallest correction that directly addresses the validation errors first.`,
     "Edit only ./roomScene.ts. Do not access any other file.",
     "Do not remove the user's intended visual change; implement it another safe way if the current approach violates constraints.",
+    "Do not start over unless the existing scene cannot be repaired in place.",
     "If validation says the edit changed unrelated scene areas, restore those unrelated areas and keep only the requested targeted change.",
     "Repairs should keep or improve the rendered appearance and visual ambition of the requested change; do not downgrade to a crude placeholder merely to pass validation.",
     "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",

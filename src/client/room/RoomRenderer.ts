@@ -21,6 +21,7 @@ export class RoomRenderer {
   private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
   private readonly onKeyUp = (event: KeyboardEvent) => this.handleKeyUp(event);
   private readonly onMouseMove = (event: MouseEvent) => this.handleMouseMove(event);
+  private readonly onCanvasClick = () => requestPointerLockSafely(this.renderer.domElement);
   private yaw = 0;
   private pitch = 0;
   private frame = 0;
@@ -62,6 +63,7 @@ export class RoomRenderer {
     this.resetSceneAnimation();
     disposeObject3D(this.dynamicObjects);
     module.buildRoom({ THREE, root: this.dynamicObjects, scene: this.scene });
+    optimizeGeneratedScenePerformance(this.dynamicObjects);
     this.animatedScene = hasGeneratedAnimation(this.scene, this.dynamicObjects);
     this.refreshColliders();
     this.requestRender();
@@ -116,6 +118,7 @@ export class RoomRenderer {
     document.removeEventListener("keydown", this.onKeyDown);
     document.removeEventListener("keyup", this.onKeyUp);
     document.removeEventListener("mousemove", this.onMouseMove);
+    this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
     window.removeEventListener("resize", this.onResize);
     disposeObject3D(this.dynamicObjects);
     this.mount.replaceChildren();
@@ -176,7 +179,7 @@ export class RoomRenderer {
   }
 
   private bindInput(): void {
-    this.renderer.domElement.addEventListener("click", () => this.renderer.domElement.requestPointerLock());
+    this.renderer.domElement.addEventListener("click", this.onCanvasClick);
     document.addEventListener("keydown", this.onKeyDown);
     document.addEventListener("keyup", this.onKeyUp);
     document.addEventListener("mousemove", this.onMouseMove);
@@ -374,6 +377,66 @@ function isMovementKey(key: string): boolean {
   return key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
 }
 
+export function requestPointerLockSafely(element: HTMLElement): Promise<void> | undefined {
+  try {
+    // Embedded browsers may reject pointer lock; keyboard navigation still works.
+    return element.requestPointerLock().catch(() => undefined);
+  } catch {
+    return undefined;
+  }
+}
+
+const generatedPointLightLimit = 12;
+const generatedSpotLightLimit = 4;
+
+export interface GeneratedScenePerformanceStats {
+  pointLightsRemoved: number;
+  spotLightsRemoved: number;
+  shadowCastingLightsDisabled: number;
+}
+
+export function optimizeGeneratedScenePerformance(root: THREE.Object3D): GeneratedScenePerformanceStats {
+  const pointLights: THREE.PointLight[] = [];
+  const spotLights: THREE.SpotLight[] = [];
+  let shadowCastingLightsDisabled = 0;
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Light)) return;
+    if (object.castShadow) {
+      object.castShadow = false;
+      shadowCastingLightsDisabled += 1;
+    }
+    if (object instanceof THREE.PointLight) pointLights.push(object);
+    if (object instanceof THREE.SpotLight) spotLights.push(object);
+  });
+
+  return {
+    pointLightsRemoved: removeWeakestLights(pointLights, generatedPointLightLimit),
+    spotLightsRemoved: removeWeakestLights(spotLights, generatedSpotLightLimit),
+    shadowCastingLightsDisabled,
+  };
+}
+
+function removeWeakestLights<T extends THREE.Light>(lights: T[], limit: number): number {
+  if (lights.length <= limit) return 0;
+  const rankedLights = [...lights].sort((a, b) => lightScore(b) - lightScore(a));
+  const keep = new Set(rankedLights.slice(0, limit));
+  let removed = 0;
+  for (const light of lights) {
+    if (keep.has(light)) continue;
+    light.parent?.remove(light);
+    removed += 1;
+  }
+  return removed;
+}
+
+function lightScore(light: THREE.Light): number {
+  const intensity = Number.isFinite(light.intensity) ? light.intensity : 0;
+  if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+    return intensity * Math.max(1, Math.min(light.distance || 1, 24));
+  }
+  return intensity;
+}
+
 /** Keeps navigation finite without trapping the user inside the starter room. */
 export function constrainNavigationPosition(position: THREE.Vector3, halfExtent = 48): THREE.Vector3 {
   position.x = THREE.MathUtils.clamp(position.x, -halfExtent, halfExtent);
@@ -388,6 +451,7 @@ export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.6
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     if (object.userData.collider === false || object.userData.walkable === true) return;
+    if (isDecorativeNavigationGeometry(object.geometry)) return;
     const bounds = new THREE.Box3().setFromObject(object);
     if (bounds.isEmpty()) return;
     if (bounds.max.y < eyeHeight - 0.55 || bounds.min.y > eyeHeight + 0.45) return;
@@ -399,6 +463,10 @@ export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.6
     colliders.push(bounds);
   });
   return colliders;
+}
+
+function isDecorativeNavigationGeometry(geometry: THREE.BufferGeometry): boolean {
+  return geometry.type === "TubeGeometry";
 }
 
 function isMeaningfulCollider(bounds: THREE.Box3): boolean {

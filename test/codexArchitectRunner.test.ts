@@ -98,6 +98,7 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("The host will keep rendering while those animation hooks exist");
     expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
     expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
+    expect(codex.thread.prompt).toContain("Use live PointLight and SpotLight objects sparingly");
     expect(codex.thread.prompt).toContain("For targeted requests");
     expect(codex.thread.prompt).toContain("Ceiling height, room height");
     expect(codex.thread.prompt).toContain("rendered room remains continuous with no gaps");
@@ -113,7 +114,7 @@ describe("Codex SDK architect runner", () => {
     const root = await mkRoomRoot();
     await writeFile(path.join(root, "activeRoomScene.ts"), "export const roomTitle = 'Still valid';\n", "utf8");
     const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(path.join(root, "roomScene.ts"), "export const roomTitle = 'Broken';\n", "utf8"));
-    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex, maxRepairAttempts: 0 });
     const events: AgentEvent[] = [];
 
     await runner.run(runInput({ prompt: "Break the scene", currentConfig: emptyRoomConfig }), (event) => events.push(event));
@@ -148,6 +149,38 @@ describe("Codex SDK architect runner", () => {
     expect(events.some((event) => event.type === "log" && event.message.includes("failed validation"))).toBe(true);
     expect(events.some((event) => event.type === "scene-updated")).toBe(true);
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Repaired green table scene");
+    expect(events.at(-1)).toMatchObject({ type: "complete" });
+  });
+
+  it("retries failed repairs with the validation error before giving up", async () => {
+    const root = await mkRoomRoot();
+    await writeFile(path.join(root, "activeRoomScene.ts"), "export const roomTitle = 'Still valid';\n", "utf8");
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), "export const roomTitle = 'Broken';\n", "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), "export const roomTitle = 'Still broken';\n", "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeRoomScene(root, "Second repair green table scene"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Add a green table", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(3);
+    expect(codex.thread.prompts[1]).toContain("repair attempt 1 of 2");
+    expect(codex.thread.prompts[2]).toContain("repair attempt 2 of 2");
+    expect(events.some((event) => event.type === "log" && event.message.includes("repair 1/2"))).toBe(true);
+    expect(events.some((event) => event.type === "log" && event.message.includes("repair 2/2"))).toBe(true);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Second repair green table scene");
     expect(events.at(-1)).toMatchObject({ type: "complete" });
   });
 
@@ -352,6 +385,55 @@ describe("Codex SDK architect runner", () => {
     expect(events.some((event) => event.type === "log" && event.message.includes("Phase 1/3 promoted"))).toBe(true);
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Church polish");
     expect(events.at(-1)).toMatchObject({ type: "complete" });
+  });
+
+  it("does not apply narrow targeted validation to broad scene replacements", async () => {
+    const root = await mkRoomRoot();
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+          title: "Gothic Church Blockout",
+          background: "#151a1d",
+          floor: "#5e5b55",
+          wall: "#7c7a70",
+          ceiling: "#4a4742",
+          light: "#ffd9a0",
+        }), "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+          title: "Gothic Church Details",
+          background: "#151a1d",
+          floor: "#5e5b55",
+          wall: "#7c7a70",
+          ceiling: "#4a4742",
+          light: "#ffd9a0",
+        }), "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+          title: "Gothic Church Polish",
+          background: "#151a1d",
+          floor: "#5e5b55",
+          wall: "#7c7a70",
+          ceiling: "#4a4742",
+          light: "#ffd9a0",
+        }), "utf8"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+    const prompt = "Transform the room into a walkable church interior with nave layout, side aisles, stone walls, vaulted ceiling, pew objects, stained glass materials, candles, warm lighting, and foggy atmosphere.";
+
+    await runner.run(runInput({ prompt, currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(3);
+    expect(events.some((event) => event.type === "log" && event.message.includes("targeted change"))).toBe(false);
+    expect(events.filter((event) => event.type === "scene-updated")).toHaveLength(3);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Gothic Church Polish");
   });
 
   it("allows furniture edits to add object geometry without treating it as layout drift", async () => {

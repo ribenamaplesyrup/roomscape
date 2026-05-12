@@ -5,7 +5,9 @@ import {
   constrainNavigationPosition,
   generatedAnimationHooks,
   hasGeneratedAnimation,
+  optimizeGeneratedScenePerformance,
   positionIntersectsColliders,
+  requestPointerLockSafely,
 } from "../src/client/room/RoomRenderer";
 
 describe("first-person navigation", () => {
@@ -52,6 +54,30 @@ describe("first-person navigation", () => {
     expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, -2), colliders)).toBe(false);
   });
 
+  it("does not turn decorative tube arches into invisible walls", () => {
+    const root = new THREE.Group();
+    const arch = new THREE.Mesh(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-4, 1.1, -2),
+          new THREE.Vector3(0, 4.5, -2),
+          new THREE.Vector3(4, 1.1, -2),
+        ]),
+        16,
+        0.08,
+        8,
+        false,
+      ),
+      new THREE.MeshBasicMaterial(),
+    );
+    root.add(arch);
+
+    const colliders = collectNavigationColliders(root);
+
+    expect(colliders).toHaveLength(0);
+    expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, -2), colliders)).toBe(false);
+  });
+
   it("detects generated animation hooks only when the scene asks for continuous rendering", () => {
     const scene = new THREE.Scene();
     const root = new THREE.Group();
@@ -74,5 +100,54 @@ describe("first-person navigation", () => {
     root.userData.update = update;
 
     expect(generatedAnimationHooks(scene, root)).toEqual([update]);
+  });
+
+  it("ignores pointer lock failures in embedded browsers", async () => {
+    const rejectedElement = {
+      requestPointerLock: () => Promise.reject(new DOMException("blocked", "SecurityError")),
+    } as unknown as HTMLElement;
+    const throwingElement = {
+      requestPointerLock: () => {
+        throw new DOMException("blocked", "SecurityError");
+      },
+    } as unknown as HTMLElement;
+
+    await expect(requestPointerLockSafely(rejectedElement)).resolves.toBeUndefined();
+    expect(requestPointerLockSafely(throwingElement)).toBeUndefined();
+  });
+
+  it("caps expensive generated lights while preserving the strongest glow sources", () => {
+    const root = new THREE.Group();
+    for (let index = 0; index < 18; index += 1) {
+      const light = new THREE.PointLight(0xffffff, index + 1, index % 2 === 0 ? 6 : 18);
+      light.castShadow = true;
+      light.name = `point-${index}`;
+      root.add(light);
+    }
+    for (let index = 0; index < 7; index += 1) {
+      const light = new THREE.SpotLight(0xffffff, index + 1, 12);
+      light.castShadow = true;
+      light.name = `spot-${index}`;
+      root.add(light);
+    }
+
+    const stats = optimizeGeneratedScenePerformance(root);
+    const remainingPointLights: THREE.PointLight[] = [];
+    const remainingSpotLights: THREE.SpotLight[] = [];
+    root.traverse((object) => {
+      if (object instanceof THREE.PointLight) remainingPointLights.push(object);
+      if (object instanceof THREE.SpotLight) remainingSpotLights.push(object);
+    });
+
+    expect(stats).toEqual({
+      pointLightsRemoved: 6,
+      spotLightsRemoved: 3,
+      shadowCastingLightsDisabled: 25,
+    });
+    expect(remainingPointLights).toHaveLength(12);
+    expect(remainingSpotLights).toHaveLength(4);
+    expect(remainingPointLights.map((light) => light.name)).toContain("point-17");
+    expect(remainingSpotLights.map((light) => light.name)).toContain("spot-6");
+    expect([...remainingPointLights, ...remainingSpotLights].every((light) => !light.castShadow)).toBe(true);
   });
 });

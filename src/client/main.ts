@@ -10,6 +10,7 @@ import type { RoomSceneModule } from "./room/sceneTypes";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const sessionStateKey = "roomscape.session.v1";
 const initialStoredSession = loadStoredSession();
+const activeRoomSceneImporters = import.meta.glob("../../sandbox/rooms/active/activeRoomScene.ts");
 
 interface ClientState {
   user: PublicUser | null;
@@ -237,14 +238,37 @@ function wireWorkspaceEvents() {
 }
 
 function applyActiveScene() {
+  applySceneModule(activeRoomScene);
+}
+
+function applySceneModule(module: RoomSceneModule) {
   if (!renderer) return;
   try {
-    renderer.applyScene(activeRoomScene);
+    renderer.applyScene(module);
   } catch (error) {
     pushLog(`ERROR: Generated scene failed to render: ${error instanceof Error ? error.message : "Unknown scene error."}`);
     renderer.applyScene(fallbackRoomScene);
     updateTelemetry();
   }
+}
+
+async function applyLatestActiveScene() {
+  try {
+    const importActiveRoomScene = activeRoomSceneImporters["../../sandbox/rooms/active/activeRoomScene.ts"];
+    if (!importActiveRoomScene) throw new Error("Active room scene importer is unavailable.");
+    const module = await importActiveRoomScene();
+    applySceneModule(module as unknown as RoomSceneModule);
+  } catch (error) {
+    pushLog(`ERROR: Unable to load active scene: ${error instanceof Error ? error.message : "Unknown scene load error."}`);
+    applyActiveScene();
+    updateTelemetry();
+  }
+}
+
+async function applyLatestActiveScenePreservingPose() {
+  const pose = renderer?.pose();
+  await applyLatestActiveScene();
+  if (pose) renderer?.restorePose(pose);
 }
 
 async function logout() {
@@ -418,6 +442,7 @@ function handleAgentEvent(event: AgentEvent, runId?: string) {
   if (event.type === "scene-updated") {
     state.promptRuns += 1;
     pushLog("Scene module updated.");
+    void applyLatestActiveScenePreservingPose();
   }
   updateTelemetry();
   persistSessionState();
@@ -452,7 +477,7 @@ async function resetRoom() {
   clearActiveRunStatus();
   seenAgentEventKeys.clear();
   closeActiveSources();
-  renderer?.applyScene(activeRoomScene);
+  await applyLatestActiveScene();
   const roomName = document.querySelector<HTMLInputElement>("#room-name");
   if (roomName) roomName.value = result.config.name;
   updateTelemetry();
@@ -467,9 +492,10 @@ async function loadRoomSelection(event: Event) {
   const id = (event.currentTarget as HTMLSelectElement).value;
   if (!id) return;
   const result = await api<{ room: SavedRoom }>(`/api/rooms/${id}`);
-  state.config = result.room.config;
+  state.config = { ...result.room.config, name: result.room.name };
   pushLog(`Loaded ${result.room.name}.`);
   renderWorkspace();
+  await applyLatestActiveScenePreservingPose();
 }
 
 function updateTelemetry() {

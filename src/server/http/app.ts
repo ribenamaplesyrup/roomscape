@@ -150,8 +150,9 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     if (req.method === "GET" && roomMatch?.[1]) {
       const room = await rooms.get(user.id, roomMatch[1]);
       if (!room) throw new HttpError(404, "Room not found.");
-      await activeRooms.saveConfig(user.id, room.config);
+      const activeConfig = await activeRooms.saveConfig(user.id, { ...room.config, name: room.name });
       const code = requireRoomCode(roomCode);
+      await code.writeConfig(activeConfig);
       const normalizedSceneSource = code.normalizeSceneSource(room.sceneSource);
       await code.writeSceneSource(normalizedSceneSource);
       const validationErrors = code.validateSceneSource(normalizedSceneSource);
@@ -159,7 +160,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         throw new HttpError(422, `Saved scene is invalid:\n${validationErrors.join("\n")}`);
       }
       await code.writeActiveSceneSource(normalizedSceneSource);
-      sendJson(res, 200, { room });
+      sendJson(res, 200, { room: { ...room, config: activeConfig } });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/active-room") {
