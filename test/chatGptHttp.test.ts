@@ -9,6 +9,7 @@ import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import { createApp, roomscapeDataPath } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
+import { emptyRoomConfig } from "../src/shared/room";
 
 class FakeCodexBridge implements CodexAuthBridge {
   public account: CodexChatGptAccount | null = null;
@@ -135,6 +136,36 @@ describe("ChatGPT auth HTTP flow", () => {
     const loaded = await request<{ room: { id: string } }>(handler, "GET", `/api/rooms/${saved.body.room.id}`, undefined, sessionCookie);
     expect(loaded.body.room.id).toBe(saved.body.room.id);
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
+  });
+
+  it("keeps active room config scoped to the authenticated user", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-active-"));
+    const roomCode = new RoomCodeRepository(roomRoot);
+    await roomCode.writeFreshScene();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode,
+      codex,
+    });
+
+    codex.account = { accountId: "acct-a", email: "a@example.com" };
+    const userA = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const userACookie = userA.headers["set-cookie"];
+    const userAConfig = { ...emptyRoomConfig, name: "User A private world" };
+    const saved = await request<{ room: { id: string } }>(handler, "POST", "/api/rooms", { name: "A world", config: userAConfig }, userACookie);
+    await request<{ room: { id: string } }>(handler, "GET", `/api/rooms/${saved.body.room.id}`, undefined, userACookie);
+
+    codex.account = { accountId: "acct-b", email: "b@example.com" };
+    const userB = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const userBCookie = userB.headers["set-cookie"];
+    const userBActive = await request<{ config: { name: string } }>(handler, "GET", "/api/active-room", undefined, userBCookie);
+    const userAActive = await request<{ config: { name: string } }>(handler, "GET", "/api/active-room", undefined, userACookie);
+
+    expect(userBActive.body.config.name).toBe("Bare Room");
+    expect(userAActive.body.config.name).toBe("User A private world");
   });
 
   it("cancels active and queued room edits when requested, reset, or the user signs out", async () => {

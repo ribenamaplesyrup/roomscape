@@ -27,10 +27,17 @@ export interface RoomRecord {
   updatedAt: string;
 }
 
+export interface ActiveRoomRecord {
+  userId: string;
+  config: RoomConfig;
+  updatedAt: string;
+}
+
 export interface RoomscapeData {
   users: UserRecord[];
   sessions: SessionRecord[];
   rooms: RoomRecord[];
+  activeRooms: ActiveRoomRecord[];
 }
 
 export interface DataStore {
@@ -42,4 +49,5 @@ export const emptyData = (): RoomscapeData => ({
   users: [],
   sessions: [],
   rooms: [],
+  activeRooms: [],
 });

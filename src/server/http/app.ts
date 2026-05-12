@@ -8,6 +8,7 @@ import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
 import { RoomCodeRepository } from "../agent/roomCodeRepository";
 import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/appServerClient";
+import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
 import { readCookie, setSessionCookie, clearSessionCookie } from "./cookies";
@@ -26,7 +27,7 @@ interface AppDeps {
 export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
-  let activeConfig: RoomConfig = freshRoomConfig();
+  const activeRooms = new ActiveRoomRepository(store);
   let runQueue: Promise<void> = Promise.resolve();
   let runGeneration = 0;
   const activeRunControllers = new Set<AbortController>();
@@ -134,6 +135,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const body = await readJson<{ name: string; config?: RoomConfig }>(req);
       const code = requireRoomCode(roomCode);
       const sceneSource = await code.readRawActiveScene();
+      const activeConfig = await activeRooms.getConfig(user.id);
       sendJson(res, 201, { room: await rooms.save(user.id, body.name, body.config ?? activeConfig, sceneSource) });
       return;
     }
@@ -141,7 +143,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     if (req.method === "GET" && roomMatch?.[1]) {
       const room = await rooms.get(user.id, roomMatch[1]);
       if (!room) throw new HttpError(404, "Room not found.");
-      activeConfig = room.config;
+      await activeRooms.saveConfig(user.id, room.config);
       const code = requireRoomCode(roomCode);
       const normalizedSceneSource = code.normalizeSceneSource(room.sceneSource);
       await code.writeSceneSource(normalizedSceneSource);
@@ -154,12 +156,12 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/active-room") {
-      sendJson(res, 200, { config: activeConfig });
+      sendJson(res, 200, { config: await activeRooms.getConfig(user.id) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
       cancelAllRuns("Room reset; cleared active room edits.");
-      activeConfig = freshRoomConfig();
+      const activeConfig = await activeRooms.saveConfig(user.id, freshRoomConfig());
       const code = requireRoomCode(roomCode);
       await code.writeConfig(activeConfig);
       await code.writeFreshScene();
@@ -171,6 +173,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const runId = randomUUID();
       const runVersion = runGeneration;
       const controller = new AbortController();
+      const activeConfig = await activeRooms.getConfig(user.id);
       const currentConfig = body.currentConfig ?? activeConfig;
       activeRunControllers.add(controller);
       knownRunIds.add(runId);
@@ -190,7 +193,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
             },
             (event) => {
               if (runVersion !== runGeneration || controller.signal.aborted) return;
-              if (event.type === "room-updated") activeConfig = event.config;
+              if (event.type === "room-updated") void activeRooms.saveConfig(user.id, event.config);
               bus.publish(runId, event);
             },
           );

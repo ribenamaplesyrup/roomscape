@@ -43,5 +43,9 @@ function sanitizeData(data: RoomscapeData): RoomscapeData {
       ...room,
       sceneSource: room.sceneSource ?? "",
     })),
+    activeRooms: (data.activeRooms ?? []).map((activeRoom) => ({
+      ...activeRoom,
+      config: activeRoom.config,
+    })),
   };
 }
