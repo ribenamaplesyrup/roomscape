@@ -436,6 +436,28 @@ describe("Codex SDK architect runner", () => {
     await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Gothic Church Polish");
   });
 
+  it("does not apply narrow targeted validation to compact new demo room prompts", async () => {
+    const root = await mkRoomRoot();
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+      title: "Orbital Observatory",
+      background: "#05070d",
+      floor: "#26303a",
+      wall: "#343f4a",
+      ceiling: "#171d24",
+      light: "#ffc88a",
+    }), "utf8"));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+    const prompt = "Create new compact orbital observatory demo room with one planet window, crafted relic exhibits, warm rim light, brushed metal walls, clear path, no hidden walls.";
+
+    await runner.run(runInput({ prompt, currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "log" && event.message.includes("targeted change"))).toBe(false);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Orbital Observatory");
+  });
+
   it("allows furniture edits to add object geometry without treating it as layout drift", async () => {
     const root = await mkRoomRoot();
     const originalScene = targetedSceneSource({

@@ -236,53 +236,57 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
 function planSceneEditPhases(prompt: string): SceneEditPhase[] {
   const trimmed = prompt.trim();
   const lower = trimmed.toLowerCase();
-  if (!isBroadSceneRequest(lower)) {
-    return [{ title: "Scene edit", prompt: trimmed, targetedValidationPrompt: trimmed }];
+  if (isBroadSceneRequest(lower)) {
+    const phaseCount = broadSceneFeatureCount(lower) >= 6 ? 3 : 2;
+    const phases: SceneEditPhase[] = [
+      {
+        title: "Fast navigable blockout",
+        prompt: [
+          `Original user request: ${trimmed}`,
+          "",
+          "Phase 1: create a fast, complete, navigable blockout of the requested room.",
+          "Prioritize the large layout, walkable floor, walls/openings, ceiling height, major silhouettes, and clear focal zones.",
+          "If the main path is not naturally visible from [0, 1.65, 0] looking down -Z, add a valid scene.userData.startPose or root.userData.startPose that opens onto the main route.",
+          "Use simple but recognizable placeholder geometry for requested objects and decorative areas.",
+          "Do not spend this phase on tiny ornament, dense repeated detail, or polish; the browser should get a usable first draft quickly.",
+        ].join("\n"),
+        targetedValidationPrompt: null,
+      },
+      {
+        title: "Requested details",
+        prompt: [
+          `Original user request: ${trimmed}`,
+          "",
+          "Phase 2: continue from the current validated blockout in roomScene.ts.",
+          "Add the most important requested details, materials, lighting, and object anatomy while preserving the walkable layout.",
+          "Keep the scope incremental: improve the existing scene instead of replacing it wholesale.",
+        ].join("\n"),
+        targetedValidationPrompt: null,
+      },
+    ];
+
+    if (phaseCount === 3) {
+      phases.push({
+        title: "Lighting and polish",
+        prompt: [
+          `Original user request: ${trimmed}`,
+          "",
+          "Phase 3: polish the current validated scene without redesigning it.",
+          "Balance lighting, atmosphere, material readability, surface texture, and a few small high-impact details.",
+          "Preserve performance and navigation; do not restart the room from scratch.",
+        ].join("\n"),
+        targetedValidationPrompt: null,
+      });
+    }
+
+    return phases;
   }
 
-  const phaseCount = broadSceneFeatureCount(lower) >= 6 ? 3 : 2;
-  const phases: SceneEditPhase[] = [
-    {
-      title: "Fast navigable blockout",
-      prompt: [
-        `Original user request: ${trimmed}`,
-        "",
-        "Phase 1: create a fast, complete, navigable blockout of the requested room.",
-        "Prioritize the large layout, walkable floor, walls/openings, ceiling height, major silhouettes, and clear focal zones.",
-        "If the main path is not naturally visible from [0, 1.65, 0] looking down -Z, add a valid scene.userData.startPose or root.userData.startPose that opens onto the main route.",
-        "Use simple but recognizable placeholder geometry for requested objects and decorative areas.",
-        "Do not spend this phase on tiny ornament, dense repeated detail, or polish; the browser should get a usable first draft quickly.",
-      ].join("\n"),
-      targetedValidationPrompt: null,
-    },
-    {
-      title: "Requested details",
-      prompt: [
-        `Original user request: ${trimmed}`,
-        "",
-        "Phase 2: continue from the current validated blockout in roomScene.ts.",
-        "Add the most important requested details, materials, lighting, and object anatomy while preserving the walkable layout.",
-        "Keep the scope incremental: improve the existing scene instead of replacing it wholesale.",
-      ].join("\n"),
-      targetedValidationPrompt: null,
-    },
-  ];
-
-  if (phaseCount === 3) {
-    phases.push({
-      title: "Lighting and polish",
-      prompt: [
-        `Original user request: ${trimmed}`,
-        "",
-        "Phase 3: polish the current validated scene without redesigning it.",
-        "Balance lighting, atmosphere, material readability, surface texture, and a few small high-impact details.",
-        "Preserve performance and navigation; do not restart the room from scratch.",
-      ].join("\n"),
-      targetedValidationPrompt: null,
-    });
+  if (isCompactSceneReplacementRequest(lower)) {
+    return [{ title: "Scene edit", prompt: trimmed, targetedValidationPrompt: null }];
   }
 
-  return phases;
+  return [{ title: "Scene edit", prompt: trimmed, targetedValidationPrompt: trimmed }];
 }
 
 function isBroadSceneRequest(prompt: string): boolean {
@@ -292,9 +296,24 @@ function isBroadSceneRequest(prompt: string): boolean {
   return broadVerb && broadSceneFeatureCount(lower) >= 4;
 }
 
+function isCompactSceneReplacementRequest(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  const sceneNoun = /\b(room|interior|space|environment|world|scene|demo|observatory|sanctuary|backrooms|museum|gallery|garden|greenhouse|church|cathedral|chapel|corridor|hall)\b/;
+  if (!sceneNoun.test(lower)) return false;
+
+  const createsScene = /\b(create|build|design)\b/.test(lower);
+  const transformsScene = /\b(transform|turn|convert)\b/.test(lower);
+  const replacesScene = /\breplace\b/.test(lower) && /\b(new|whole|entire|scene|room|world|environment|demo)\b/.test(lower);
+  if (!createsScene && !transformsScene && !replacesScene) return false;
+
+  const featureCount = broadSceneFeatureCount(lower);
+  const explicitNewWorld = /\b(new|demo|world|environment|scene|observatory|sanctuary|backrooms|museum|gallery|greenhouse|church|cathedral|chapel)\b/.test(lower);
+  return explicitNewWorld || featureCount >= 2;
+}
+
 function broadSceneFeatureCount(prompt: string): number {
   const featurePatterns = [
-    /\b(room|interior|space|environment|world|scene|church|cathedral|chapel|hall|nave|apse)\b/,
+    /\b(room|interior|space|environment|world|scene|demo|church|cathedral|chapel|hall|nave|apse|observatory|sanctuary|museum|gallery|greenhouse|backrooms)\b/,
     /\b(layout|walkable|aisle|side aisle|corridor|opening|doorway|expanded|long|wide|scale)\b/,
     /\b(wall|walls|column|columns|arch|arches|vault|vaulted|ceiling|ribbed|window|windows)\b/,
     /\b(pew|pews|altar|furniture|statue|table|chair|sofa|object|objects)\b/,
