@@ -113,8 +113,15 @@ async function startChatGptAuth() {
   errorTarget.hidden = true;
   try {
     const login = await api<ChatGptLoginStart>("/api/auth/chatgpt/start", { method: "POST" });
-    chatGptAuthWindow.location.href = login.authUrl;
-    button.textContent = "Waiting for ChatGPT...";
+    if (login.type === "chatgptDeviceCode") {
+      chatGptAuthWindow.location.href = login.verificationUrl;
+      errorTarget.textContent = `Enter code ${login.userCode} on the OpenAI page.`;
+      errorTarget.hidden = false;
+      button.textContent = login.userCode;
+    } else {
+      chatGptAuthWindow.location.href = login.authUrl;
+      button.textContent = "Waiting for ChatGPT...";
+    }
     chatGptPoll = window.setInterval(() => void completeChatGptAuth(login.loginId, true), 2_500);
   } catch (error) {
     chatGptAuthWindow?.close();
@@ -134,6 +141,8 @@ async function authenticateExistingChatGptSession(): Promise<boolean> {
     chatGptAuthWindow?.close();
     chatGptAuthWindow = null;
     state.user = result.user;
+    const errorTarget = document.querySelector<HTMLElement>("#auth-error");
+    if (errorTarget) errorTarget.hidden = true;
     await loadRooms();
     renderWorkspace();
     return true;

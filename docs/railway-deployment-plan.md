@@ -49,16 +49,16 @@ Testable outcomes:
 
 ## 5. Build ChatGPT-Native Auth - In Progress
 
-Roomscape should authenticate as a ChatGPT/OpenAI-native experience, not with a generic third-party identity provider. The local Codex app-server bridge proves the ChatGPT account flow locally, but the hosted Railway site needs either a ChatGPT Apps/MCP integration or an official hosted ChatGPT/OpenAI account linking path before it can be considered production auth.
+Roomscape should authenticate as a ChatGPT/OpenAI-native experience, not with a generic third-party identity provider. Hosted Railway uses Codex app-server's ChatGPT device-code flow so users authenticate through OpenAI without relying on a localhost callback.
 
 Testable outcomes:
 
 - Complete: local ChatGPT/Codex auth remains the only visible sign-in path.
 - Complete: GitHub OAuth has been removed from the product path.
-- Complete: hosted Railway behavior is documented: the current local Codex callback is not a production ChatGPT auth flow.
-- Pending: choose the ChatGPT-native integration shape, most likely a ChatGPT Apps/MCP-backed Roomscape entry point.
-- Pending: implement stable ChatGPT user identity mapping for hosted users.
-- Pending: verify that User A and User B get distinct Roomscape user ids and isolated worlds.
+- Complete: production defaults to `chatgptDeviceCode` instead of the local callback browser flow.
+- Complete: completed logins store a per-user Codex auth ref and agent runs receive that user's `CODEX_HOME`.
+- Pending: deploy the device-code flow to Railway and complete a real ChatGPT login from the public URL.
+- Pending: verify that User A and User B get distinct Roomscape user ids and isolated worlds on Railway.
 
 ## 6. Introduce PostgreSQL Data Store
 

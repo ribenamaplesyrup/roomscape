@@ -95,7 +95,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/start") {
       const bridge = requireCodexBridge(codex);
       const login = await mapCodexErrors(() => bridge.startChatGptLogin());
-      sendJson(res, 200, { loginId: login.loginId, authUrl: login.authUrl });
+      sendJson(res, 200, login);
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/complete") {
@@ -131,7 +131,8 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         sendJson(res, 200, { usage: null });
         return;
       }
-      sendJson(res, 200, { usage: await mapCodexErrors(() => codex.readRateLimits()) });
+      const record = await userRecord(user.id);
+      sendJson(res, 200, { usage: await mapCodexErrors(() => codex.readRateLimits(record?.codexAuthRef)) });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/rooms") {
@@ -187,6 +188,8 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       runState.controllers.add(controller);
       runState.runIds.add(runId);
       runOwners.set(runId, user.id);
+      const record = await userRecord(user.id);
+      const codexHome = record?.codexAuthRef && codex?.codexHomeForAuthRef ? codex.codexHomeForAuthRef(record.codexAuthRef) : undefined;
       bus.publish(runId, { type: "log", message: "Queued room edit.", at: new Date().toISOString() });
       runState.queue = runState.queue
         .catch(() => undefined)
@@ -199,6 +202,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
               prompt: body.prompt,
               model: body.model,
               currentConfig,
+              ...(codexHome ? { codexHome } : {}),
               signal: controller.signal,
             },
             (event) => {
@@ -264,6 +268,11 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     }
     runState.runIds.clear();
     runState.queue = Promise.resolve();
+  }
+
+  async function userRecord(userId: string) {
+    const data = await store.read();
+    return data.users.find((candidate) => candidate.id === userId) ?? null;
   }
 }
 

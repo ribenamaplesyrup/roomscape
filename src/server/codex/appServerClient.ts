@@ -9,9 +9,7 @@ interface RpcResponse {
   error?: { code: number; message: string };
 }
 
-interface ChatGptLoginResult extends ChatGptLoginStart {
-  type: "chatgpt";
-}
+type ChatGptLoginResult = ChatGptLoginStart;
 
 interface CodexAccountReadResult {
   account: null | {
@@ -32,6 +30,7 @@ export interface CodexRateLimitsResult {
 export interface CodexChatGptAccount {
   accountId: string;
   email?: string;
+  codexAuthRef?: string;
   planType?: string;
 }
 
@@ -47,7 +46,8 @@ export interface CodexAuthBridge {
   startChatGptLogin(): Promise<ChatGptLoginStart>;
   completeChatGptLogin(loginId: string): Promise<CodexChatGptAccount | null>;
   readChatGptAccount(): Promise<CodexChatGptAccount | null>;
-  readRateLimits(): Promise<CodexRateLimitsResult>;
+  readRateLimits(codexAuthRef?: string): Promise<CodexRateLimitsResult>;
+  codexHomeForAuthRef?(codexAuthRef: string | undefined): string | undefined;
 }
 
 export class CodexAppServerClient implements CodexAuthBridge {
@@ -56,11 +56,14 @@ export class CodexAppServerClient implements CodexAuthBridge {
   private nextId = 1;
   private initialized: Promise<void> | null = null;
 
-  public constructor(private readonly command = "codex") {}
+  public constructor(
+    private readonly command = "codex",
+    private readonly options: { env?: NodeJS.ProcessEnv; loginType?: "chatgpt" | "chatgptDeviceCode"; codexAuthRef?: string } = {},
+  ) {}
 
   /** Starts the Codex-managed ChatGPT OAuth browser flow and returns the auth URL. */
   public async startChatGptLogin(): Promise<ChatGptLoginResult> {
-    const result = await this.request("account/login/start", { type: "chatgpt" });
+    const result = await this.request("account/login/start", { type: this.options.loginType ?? "chatgpt" });
     if (!isChatGptLoginResult(result)) {
       throw new Error("Codex app-server returned an unexpected ChatGPT login response.");
     }
@@ -70,10 +73,7 @@ export class CodexAppServerClient implements CodexAuthBridge {
   /** Polls the Codex auth state and consumes login-completed notifications when available. */
   public async completeChatGptLogin(loginId: string): Promise<CodexChatGptAccount | null> {
     const completion = await this.waitForLoginCompletion(loginId, 1_500);
-    if (!completion) {
-      return null;
-    }
-    if (!completion.success) {
+    if (completion && !completion.success) {
       throw new Error(completion.error ?? "ChatGPT login did not complete.");
     }
     return this.readChatGptAccount();
@@ -82,13 +82,18 @@ export class CodexAppServerClient implements CodexAuthBridge {
   /** Reads the current Codex account and normalizes the ChatGPT account shape for Roomscape. */
   public async readChatGptAccount(): Promise<CodexChatGptAccount | null> {
     const result = await this.request("account/read", { refreshToken: true });
-    if (!isAccountReadResult(result) || result.account?.type !== "chatgpt") {
+    if (!isAccountReadResult(result)) {
+      return null;
+    }
+    const account = result.account;
+    if (!account || !isChatGptAccountType(account.type)) {
       return null;
     }
     return {
-      accountId: result.account.accountId ?? result.account.chatgptAccountId ?? result.account.email ?? "chatgpt",
-      ...(result.account.email ? { email: result.account.email } : {}),
-      ...(result.account.planType ? { planType: result.account.planType } : {}),
+      accountId: account.accountId ?? account.chatgptAccountId ?? account.email ?? "chatgpt",
+      ...(account.email ? { email: account.email } : {}),
+      ...(this.options.codexAuthRef ? { codexAuthRef: this.options.codexAuthRef } : {}),
+      ...(account.planType ? { planType: account.planType } : {}),
     };
   }
 
@@ -133,6 +138,7 @@ export class CodexAppServerClient implements CodexAuthBridge {
     try {
       this.proc = spawn(this.command, ["app-server"], {
         stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...this.options.env },
       });
     } catch (error) {
       throw new CodexAppServerUnavailableError(error instanceof Error ? error.message : "Unable to start Codex app-server.");
@@ -215,11 +221,23 @@ export class CodexAppServerClient implements CodexAuthBridge {
 }
 
 function isChatGptLoginResult(value: unknown): value is ChatGptLoginResult {
-  return Boolean(value && typeof value === "object" && (value as ChatGptLoginResult).type === "chatgpt" && (value as ChatGptLoginResult).loginId && (value as ChatGptLoginResult).authUrl);
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ChatGptLoginStart>;
+  if (candidate.type === "chatgpt") {
+    return Boolean(candidate.loginId && "authUrl" in candidate && candidate.authUrl);
+  }
+  if (candidate.type === "chatgptDeviceCode") {
+    return Boolean(candidate.loginId && "verificationUrl" in candidate && candidate.verificationUrl && "userCode" in candidate && candidate.userCode);
+  }
+  return false;
 }
 
 function isAccountReadResult(value: unknown): value is CodexAccountReadResult {
   return Boolean(value && typeof value === "object" && "account" in value);
+}
+
+function isChatGptAccountType(value: unknown): boolean {
+  return value === "chatgpt" || value === "chatgptAuthTokens";
 }
 
 function isLoginCompletedNotification(value: unknown): value is LoginCompletedNotification {

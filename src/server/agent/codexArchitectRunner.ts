@@ -26,6 +26,7 @@ export interface CodexSdkArchitectRunnerOptions {
 /** Runs the Architect through the Codex SDK while keeping writes scoped to the active room sandbox. */
 export class CodexSdkArchitectRunner implements ArchitectRunner {
   private readonly codex: CodexThreadFactory;
+  private readonly usesInjectedCodex: boolean;
   private readonly maxRepairAttempts: number;
 
   public constructor(
@@ -33,6 +34,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     options: CodexSdkArchitectRunnerOptions = {},
   ) {
     this.codex = options.codex ?? new Codex();
+    this.usesInjectedCodex = Boolean(options.codex);
     this.maxRepairAttempts = options.maxRepairAttempts ?? 2;
   }
 
@@ -50,7 +52,8 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         emit(log(`Split broad room edit into ${phases.length} incremental phases: ${phases.map((phase) => phase.title).join(" -> ")}.`));
       }
 
-      const thread = this.codex.startThread({
+      const threadFactory = input.codexHome && !this.usesInjectedCodex ? new Codex({ env: codexEnvironment(input.codexHome) }) : this.codex;
+      const thread = threadFactory.startThread({
         model: input.model,
         workingDirectory: this.roomCode.sandboxRoot,
         skipGitRepoCheck: true,
@@ -192,6 +195,12 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     }
     return false;
   }
+}
+
+function codexEnvironment(codexHome: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries({ ...process.env, CODEX_HOME: codexHome }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
 }
 
 function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): string {

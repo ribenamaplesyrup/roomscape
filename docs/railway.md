@@ -64,21 +64,21 @@ Every room/world query should include the authenticated user's id, and every age
 
 ## Next Implementation Steps
 
-1. Decide the ChatGPT-native hosted auth shape, most likely a ChatGPT Apps/MCP-backed Roomscape entry point rather than a generic web OAuth provider.
+1. Deploy and test hosted ChatGPT device-code auth on Railway with a real ChatGPT account.
 2. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
 3. Move `activeConfig` out of process memory and into user/world scoped storage.
 4. Replace `sandbox/rooms/active` with temporary per-run workspaces and persisted per-world scene source.
 
-## ChatGPT Auth Caveat
+## ChatGPT Auth
 
-The current ChatGPT sign-in is mediated through Codex's local app-server bridge. That works for local Codex workflows, but it is not a production web OAuth flow for arbitrary Railway users. Roomscape's product direction is ChatGPT/OpenAI-native auth, so the hosted path should become a ChatGPT Apps/MCP integration or an official hosted ChatGPT/OpenAI account linking mechanism if one becomes available for this use case.
+Roomscape uses Codex-managed ChatGPT auth rather than GitHub, username/password, or user-supplied API keys.
 
-Observed Railway behavior:
+Local development can still use the browser callback flow. Railway production defaults to the official Codex device-code flow: `POST /api/auth/chatgpt/start` returns `verificationUrl` and `userCode`, then the frontend sends the user to `https://auth.openai.com/codex/device` and polls completion.
 
-- `POST /api/auth/chatgpt/start` returns an OpenAI auth URL, but the redirect URI is `http://localhost:1455/auth/callback`, which is local to Codex and not usable by hosted users.
-- `POST /api/auth/chatgpt/existing` returns `202 {"status":"pending"}` because Railway has no local Codex ChatGPT account session to reuse.
-- Protected APIs correctly reject unauthenticated requests.
+Completed hosted logins are stored under a per-user Codex auth reference in `ROOMSCAPE_CODEX_AUTH_DIR`, defaulting to `${ROOMSCAPE_DATA_DIR}/codex-auth`. Agent runs receive that user's `CODEX_HOME`, so Codex SDK edits are not powered by a single global Railway account.
 
-## ChatGPT App Direction
+Key environment variables:
 
-OpenAI's ChatGPT Apps/MCP docs describe an auth model where ChatGPT surfaces OAuth linking UI for app tools when the MCP server advertises OAuth metadata and returns `mcp/www_authenticate` challenges. That is different from a normal "Sign in with ChatGPT" button on a standalone website. If Roomscape should be available only to ChatGPT users, the next auth milestone is to build the ChatGPT app entry point and map ChatGPT-linked users to Roomscape user records there.
+- `ROOMSCAPE_DATA_DIR=/data`
+- `ROOMSCAPE_CHATGPT_LOGIN_FLOW=device_code`
+- `ROOMSCAPE_CODEX_AUTH_DIR=/data/codex-auth`

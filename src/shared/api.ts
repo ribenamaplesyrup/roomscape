@@ -41,9 +41,21 @@ export interface AgentRunStart {
   runId: string;
 }
 
-export interface ChatGptLoginStart {
+export type ChatGptLoginStart =
+  | ChatGptBrowserLoginStart
+  | ChatGptDeviceCodeLoginStart;
+
+export interface ChatGptBrowserLoginStart {
+  type: "chatgpt";
   loginId: string;
   authUrl: string;
+}
+
+export interface ChatGptDeviceCodeLoginStart {
+  type: "chatgptDeviceCode";
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
 }
 
 export interface ChatGptAuthStatus {

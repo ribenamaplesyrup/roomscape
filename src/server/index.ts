@@ -3,7 +3,7 @@ import path from "node:path";
 import { createServer as createViteServer } from "vite";
 import { AgentRunBus } from "./agent/architectRunner";
 import { CodexSdkArchitectRunner } from "./agent/codexArchitectRunner";
-import { CodexAppServerClient } from "./codex/appServerClient";
+import { CodexUserAuthCoordinator, chatGptLoginFlow, roomscapeCodexAuthRoot } from "./codex/userAuthCoordinator";
 import { RoomCodeRepository } from "./agent/roomCodeRepository";
 import { createApp } from "./http/app";
 import { createDataStore } from "./storage/createDataStore";
@@ -24,7 +24,10 @@ const store = createDataStore(cwd, process.env);
 const roomCode = new RoomCodeRepository(path.join(cwd, "sandbox/rooms/active"));
 const runner = new CodexSdkArchitectRunner(roomCode);
 const bus = new AgentRunBus();
-const codex = new CodexAppServerClient();
+const codex = new CodexUserAuthCoordinator({
+  authRoot: roomscapeCodexAuthRoot(cwd, process.env),
+  loginFlow: chatGptLoginFlow(process.env),
+});
 const staticRoot = path.join(cwd, "dist/client");
 const app = createApp({ store, runner, bus, roomCode, codex, ...(vite ? { vite } : { staticRoot }) });
 

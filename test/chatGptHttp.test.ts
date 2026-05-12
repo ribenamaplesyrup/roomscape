@@ -9,15 +9,18 @@ import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import { createApp, roomscapeDataPath } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
+import { chatGptLoginFlow, roomscapeCodexAuthRoot } from "../src/server/codex/userAuthCoordinator";
+import type { ChatGptLoginStart } from "../src/shared/api";
 import { emptyRoomConfig } from "../src/shared/room";
 
 class FakeCodexBridge implements CodexAuthBridge {
   public account: CodexChatGptAccount | null = null;
   public completedLoginIds = new Set<string>();
+  public loginStart: ChatGptLoginStart = { type: "chatgpt", loginId: "login-1", authUrl: "https://chatgpt.com/auth" };
 
   /** Starts a deterministic fake login for the HTTP integration test. */
   public async startChatGptLogin() {
-    return { loginId: "login-1", authUrl: "https://chatgpt.com/auth" };
+    return this.loginStart;
   }
 
   /** Completes only after the requested login id has been marked completed. */
@@ -42,6 +45,10 @@ class FakeCodexBridge implements CodexAuthBridge {
         },
       },
     };
+  }
+
+  public codexHomeForAuthRef(codexAuthRef: string | undefined): string | undefined {
+    return codexAuthRef ? `/auth/${codexAuthRef}` : undefined;
   }
 }
 
@@ -68,6 +75,12 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_PATH: "/data/roomscape.json" })).toBe("/data/roomscape.json");
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "data.json"));
     expect(roomscapeDataPath("/app", {})).toBe(path.join("/app", ".roomscape", "data.json"));
+  });
+
+  it("uses hosted device-code ChatGPT login defaults in production", () => {
+    expect(chatGptLoginFlow({ NODE_ENV: "production" })).toBe("device_code");
+    expect(chatGptLoginFlow({ NODE_ENV: "production", ROOMSCAPE_CHATGPT_LOGIN_FLOW: "browser" })).toBe("browser");
+    expect(roomscapeCodexAuthRoot("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "codex-auth"));
   });
 
   it("creates a session from an existing Codex ChatGPT account when popups are unavailable", async () => {
@@ -104,17 +117,14 @@ describe("ChatGPT auth HTTP flow", () => {
       codex,
     });
 
-    const started = await request<{ loginId: string; authUrl: string }>(handler, "POST", "/api/auth/chatgpt/start");
-    expect(started.body).toEqual({ loginId: "login-1", authUrl: "https://chatgpt.com/auth" });
+    const started = await request<{ type: string; loginId: string; authUrl: string }>(handler, "POST", "/api/auth/chatgpt/start");
+    expect(started.body).toEqual({ type: "chatgpt", loginId: "login-1", authUrl: "https://chatgpt.com/auth" });
 
     const pending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
     expect(pending.body.status).toBe("pending");
 
-    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
-    const stillPending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
-    expect(stillPending.body.status).toBe("pending");
-
     codex.completedLoginIds.add("login-1");
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
     const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
     expect(completed.body.status).toBe("authenticated");
     expect(completed.body.user.authMode).toBe("chatgpt");
@@ -138,6 +148,46 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(loaded.body.room.config.name).toBe("Saved scene");
     await expect(readFile(path.join(roomRoot, "roomConfig.ts"), "utf8")).resolves.toContain('name": "Saved scene"');
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
+  });
+
+  it("returns device-code login details for hosted ChatGPT auth", async () => {
+    const codex = new FakeCodexBridge();
+    codex.loginStart = {
+      type: "chatgptDeviceCode",
+      loginId: "login-device",
+      verificationUrl: "https://auth.openai.com/codex/device",
+      userCode: "ABCD-1234",
+    };
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(await mkdtemp(path.join(os.tmpdir(), "roomscape-http-device-"))),
+      codex,
+    });
+
+    const started = await request<ChatGptLoginStart>(handler, "POST", "/api/auth/chatgpt/start");
+    expect(started.body).toEqual(codex.loginStart);
+  });
+
+  it("passes the authenticated user's Codex home into agent runs", async () => {
+    const codex = new FakeCodexBridge();
+    const runner = new RecordingRunner();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(await mkdtemp(path.join(os.tmpdir(), "roomscape-http-codex-home-"))),
+      codex,
+    });
+
+    codex.account = { accountId: "acct-chatgpt", codexAuthRef: "auth-a", email: "designer@example.com" };
+    codex.completedLoginIds.add("login-1");
+    const completed = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, completed.headers["set-cookie"]);
+
+    const input = await runner.waitForRun();
+    expect(input.codexHome).toBe("/auth/auth-a");
   });
 
   it("keeps active room config scoped to the authenticated user", async () => {
@@ -260,6 +310,21 @@ class HangingRunner implements ArchitectRunner {
     this.started = new Promise<void>((resolve) => {
       this.resolveStarted = resolve;
     });
+  }
+}
+
+class RecordingRunner implements ArchitectRunner {
+  private resolveRun: ((input: Parameters<ArchitectRunner["run"]>[0]) => void) | undefined;
+  private readonly runStarted = new Promise<Parameters<ArchitectRunner["run"]>[0]>((resolve) => {
+    this.resolveRun = resolve;
+  });
+
+  public async run(input: Parameters<ArchitectRunner["run"]>[0]): Promise<void> {
+    this.resolveRun?.(input);
+  }
+
+  public waitForRun(): Promise<Parameters<ArchitectRunner["run"]>[0]> {
+    return this.runStarted;
   }
 }
 

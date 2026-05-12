@@ -7,6 +7,7 @@ export interface UserRecord {
   openAiAccountHash?: string;
   openAiAccountLabel?: string;
   accountLabel?: string;
+  codexAuthRef?: string;
   planType?: string;
   createdAt: string;
   updatedAt: string;

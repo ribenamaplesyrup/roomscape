@@ -5,6 +5,7 @@ import type { DataStore, UserRecord } from "../storage/types";
 export interface ChatGptAuthInput {
   accountId: string;
   email?: string;
+  codexAuthRef?: string;
   planType?: string;
 }
 
@@ -27,6 +28,7 @@ export class AuthService {
       user.authMode = "chatgpt";
       user.openAiAccountLabel = accountLabel;
       user.accountLabel = accountLabel;
+      if (input.codexAuthRef) user.codexAuthRef = input.codexAuthRef;
       if (input.planType) user.planType = input.planType;
       user.updatedAt = now;
     } else {
@@ -36,6 +38,7 @@ export class AuthService {
         openAiAccountHash,
         openAiAccountLabel: accountLabel,
         accountLabel,
+        ...(input.codexAuthRef ? { codexAuthRef: input.codexAuthRef } : {}),
         ...(input.planType ? { planType: input.planType } : {}),
         createdAt: now,
         updatedAt: now,
