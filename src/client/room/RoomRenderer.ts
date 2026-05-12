@@ -10,9 +10,12 @@ export interface CameraPose {
 export class RoomRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
-  private readonly renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "low-power" });
+  private readonly renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
   private readonly keys = new Set<string>();
   private readonly dynamicObjects = new THREE.Group();
+  private readonly navigationHalfExtent = 48;
+  private readonly collisionRadius = 0.28;
+  private readonly colliders: THREE.Box3[] = [];
   private readonly onResize = () => this.resize();
   private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
   private readonly onKeyUp = (event: KeyboardEvent) => this.handleKeyUp(event);
@@ -24,7 +27,7 @@ export class RoomRenderer {
   private running = false;
 
   public constructor(private readonly mount: HTMLElement) {
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
@@ -46,6 +49,7 @@ export class RoomRenderer {
       const mesh = meshForObject(object);
       if (mesh) this.dynamicObjects.add(mesh);
     }
+    this.refreshColliders();
     this.requestRender();
   }
 
@@ -53,6 +57,7 @@ export class RoomRenderer {
   public applyScene(module: RoomSceneModule): void {
     disposeObject3D(this.dynamicObjects);
     module.buildRoom({ THREE, root: this.dynamicObjects, scene: this.scene });
+    this.refreshColliders();
     this.requestRender();
   }
 
@@ -194,10 +199,31 @@ export class RoomRenderer {
     if (this.keys.has("ArrowLeft")) direction.sub(right);
     if (direction.lengthSq() > 0) {
       direction.normalize().multiplyScalar(0.055);
-      this.camera.position.add(direction);
-      this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, -4.5, 4.5);
-      this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z, -4.5, 4.5);
+      this.tryMove(direction);
     }
+  }
+
+  private tryMove(delta: THREE.Vector3): void {
+    const next = constrainNavigationPosition(this.camera.position.clone().add(delta), this.navigationHalfExtent);
+    if (!positionIntersectsColliders(next, this.colliders)) {
+      this.camera.position.copy(next);
+      return;
+    }
+
+    const slideX = constrainNavigationPosition(this.camera.position.clone().add(new THREE.Vector3(delta.x, 0, 0)), this.navigationHalfExtent);
+    if (!positionIntersectsColliders(slideX, this.colliders)) {
+      this.camera.position.copy(slideX);
+      return;
+    }
+
+    const slideZ = constrainNavigationPosition(this.camera.position.clone().add(new THREE.Vector3(0, 0, delta.z)), this.navigationHalfExtent);
+    if (!positionIntersectsColliders(slideZ, this.colliders)) {
+      this.camera.position.copy(slideZ);
+    }
+  }
+
+  private refreshColliders(): void {
+    this.colliders.splice(0, this.colliders.length, ...collectNavigationColliders(this.dynamicObjects, this.camera.position.y, this.collisionRadius));
   }
 
   private resize(): void {
@@ -308,6 +334,47 @@ function horizontalCameraForward(camera: THREE.Camera): THREE.Vector3 {
 
 function isMovementKey(key: string): boolean {
   return key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
+}
+
+/** Keeps navigation finite without trapping the user inside the starter room. */
+export function constrainNavigationPosition(position: THREE.Vector3, halfExtent = 48): THREE.Vector3 {
+  position.x = THREE.MathUtils.clamp(position.x, -halfExtent, halfExtent);
+  position.z = THREE.MathUtils.clamp(position.z, -halfExtent, halfExtent);
+  return position;
+}
+
+/** Builds camera-height solid bounds from generated scene geometry, leaving real openings passable. */
+export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.65, radius = 0.28): THREE.Box3[] {
+  const colliders: THREE.Box3[] = [];
+  root.updateMatrixWorld(true);
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    if (object.userData.collider === false || object.userData.walkable === true) return;
+    const bounds = new THREE.Box3().setFromObject(object);
+    if (bounds.isEmpty()) return;
+    if (bounds.max.y < eyeHeight - 0.55 || bounds.min.y > eyeHeight + 0.45) return;
+    if (!isMeaningfulCollider(bounds)) return;
+    bounds.min.x -= radius;
+    bounds.max.x += radius;
+    bounds.min.z -= radius;
+    bounds.max.z += radius;
+    colliders.push(bounds);
+  });
+  return colliders;
+}
+
+function isMeaningfulCollider(bounds: THREE.Box3): boolean {
+  const size = new THREE.Vector3();
+  bounds.getSize(size);
+  return size.y >= 0.5 && (size.x >= 0.35 || size.z >= 0.35);
+}
+
+/** Checks whether a camera position intersects any generated solid at walking height. */
+export function positionIntersectsColliders(position: THREE.Vector3, colliders: THREE.Box3[]): boolean {
+  return colliders.some((collider) => position.x >= collider.min.x
+    && position.x <= collider.max.x
+    && position.z >= collider.min.z
+    && position.z <= collider.max.z);
 }
 
 function plainMaterial(color: string): THREE.MeshStandardMaterial {

@@ -27,6 +27,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
   let activeConfig: RoomConfig = freshRoomConfig();
+  let runQueue: Promise<void> = Promise.resolve();
 
   /** Handles API routes first, then delegates static and HMR traffic to Vite in development. */
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -122,12 +123,13 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       if (!room) throw new HttpError(404, "Room not found.");
       activeConfig = room.config;
       const code = requireRoomCode(roomCode);
-      await code.writeSceneSource(room.sceneSource);
-      const validationErrors = code.validateSceneSource(room.sceneSource);
+      const normalizedSceneSource = code.normalizeSceneSource(room.sceneSource);
+      await code.writeSceneSource(normalizedSceneSource);
+      const validationErrors = code.validateSceneSource(normalizedSceneSource);
       if (validationErrors.length > 0) {
         throw new HttpError(422, `Saved scene is invalid:\n${validationErrors.join("\n")}`);
       }
-      await code.writeActiveSceneSource(room.sceneSource);
+      await code.writeActiveSceneSource(normalizedSceneSource);
       sendJson(res, 200, { room });
       return;
     }
@@ -147,18 +149,21 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const body = await readJson<{ prompt: string; model: string; currentConfig?: RoomConfig }>(req);
       const runId = randomUUID();
       const currentConfig = body.currentConfig ?? activeConfig;
-      runner.run(
-        {
-          runId,
-          prompt: body.prompt,
-          model: body.model,
-          currentConfig,
-        },
-        (event) => {
-          if (event.type === "room-updated") activeConfig = event.config;
-          bus.publish(runId, event);
-        },
-      );
+      bus.publish(runId, { type: "log", message: "Queued room edit.", at: new Date().toISOString() });
+      runQueue = runQueue
+        .catch(() => undefined)
+        .then(() => runner.run(
+          {
+            runId,
+            prompt: body.prompt,
+            model: body.model,
+            currentConfig,
+          },
+          (event) => {
+            if (event.type === "room-updated") activeConfig = event.config;
+            bus.publish(runId, event);
+          },
+        ));
       sendJson(res, 202, { runId });
       return;
     }

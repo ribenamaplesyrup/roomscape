@@ -52,6 +52,11 @@ export class RoomCodeRepository {
     return this.writeTextFile(this.activeSceneFile, source, "Promote validated Three.js room scene.");
   }
 
+  /** Removes common model-authored TypeScript annotations that are unsafe in the sandbox contract. */
+  public normalizeSceneSource(source: string): string {
+    return source.replace(/:\s*THREE\.[A-Za-z0-9_$.[\]<>, |&?]+(?=\s*(?:=>|[=,);{]))/g, "");
+  }
+
   /** Reads the editable Three.js scene module as text for Codex context. */
   public async readRawScene(): Promise<string> {
     return this.readTextFile(this.sceneFile, "Read Three.js room scene.");
@@ -65,19 +70,20 @@ export class RoomCodeRepository {
   /** Validates scene source before it can be promoted to the browser-facing module. */
   public validateSceneSource(source: string): string[] {
     const errors: string[] = [];
+    const normalizedSource = this.normalizeSceneSource(source);
     if (!source.includes("export const roomTitle")) {
       errors.push("roomScene.ts must export const roomTitle.");
     }
     if (!source.includes("export function buildRoom")) {
       errors.push("roomScene.ts must export function buildRoom(...).");
     }
-    if (/new\s+THREE\.WebGLRenderer|new\s+THREE\.PerspectiveCamera|document\.|window\.|fetch\s*\(|setTimeout\s*\(|setInterval\s*\(|requestAnimationFrame\s*\(/.test(source)) {
+    if (/new\s+THREE\.WebGLRenderer|new\s+THREE\.PerspectiveCamera|document\.|window\.|fetch\s*\(|setTimeout\s*\(|setInterval\s*\(|requestAnimationFrame\s*\(/.test(normalizedSource)) {
       errors.push("roomScene.ts must not create renderers/cameras, touch DOM/window, perform network calls, or start timers.");
     }
-    if (/:\s*THREE\./.test(source)) {
+    if (/:\s*THREE\./.test(normalizedSource)) {
       errors.push("roomScene.ts must not use THREE.* namespace type annotations; let local Three.js values infer their types.");
     }
-    const diagnostics = ts.transpileModule(source, {
+    const diagnostics = ts.transpileModule(normalizedSource, {
       compilerOptions: {
         isolatedModules: true,
         module: ts.ModuleKind.ESNext,

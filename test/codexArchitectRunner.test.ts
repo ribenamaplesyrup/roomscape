@@ -78,6 +78,9 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("Do not write THREE.* TypeScript type annotations");
     expect(codex.thread.prompt).toContain("procedural DataTexture");
     expect(codex.thread.prompt).toContain("Do not use CanvasTexture");
+    expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
+    expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
+    expect(codex.thread.prompt).toContain("For targeted requests");
     expect(codex.thread.prompt).not.toContain("Gulf Futurist");
     expect(codex.thread.prompt).not.toContain("Atmosphere and texture are primary");
     expect(events.some((event) => event.type === "scene-updated")).toBe(true);
@@ -126,6 +129,246 @@ describe("Codex SDK architect runner", () => {
     expect(events.at(-1)).toMatchObject({ type: "complete" });
   });
 
+  it("repairs carpet-only edits that retheme unrelated scene areas", async () => {
+    const root = await mkRoomRoot();
+    const originalCarpetScene = carpetSceneSource({
+      title: "Original carpet room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalCarpetScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalCarpetScene, "utf8");
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), carpetSceneSource({
+          title: "Bright Sunroom",
+          background: "#fff4c5",
+          floor: "#fff06a",
+          wall: "#ffe7aa",
+          ceiling: "#fffbe8",
+        }), "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), carpetSceneSource({
+          title: "Original carpet room",
+          background: "#ffffff",
+          floor: "#fff06a",
+          wall: "#d7d2c8",
+          ceiling: "#f1eee8",
+        }), "utf8"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Make the carpet light yellow", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(2);
+    expect(codex.thread.prompts[1]).toContain("targeted change to floor/carpet");
+    expect(events.some((event) => event.type === "log" && event.message.includes("targeted change to floor/carpet"))).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain('color: "#fff06a"');
+    expect(promoted).toContain('color: "#d7d2c8"');
+    expect(promoted).not.toContain("#ffe7aa");
+  });
+
+  it("repairs wall-only edits that change unrelated lighting", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+          title: "Blue wall room",
+          background: "#ffffff",
+          floor: "#8a8479",
+          wall: "#5d8fd8",
+          ceiling: "#f1eee8",
+          light: "#ffe2a0",
+        }), "utf8"),
+      },
+      {
+        events: [fileChange("roomScene.ts"), completed()],
+        beforeStream: () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+          title: "Blue wall room",
+          background: "#ffffff",
+          floor: "#8a8479",
+          wall: "#5d8fd8",
+          ceiling: "#f1eee8",
+          light: "#ffffff",
+        }), "utf8"),
+      },
+    ]);
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Make the walls blue", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(2);
+    expect(codex.thread.prompts[1]).toContain("targeted change to walls");
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain('color: "#5d8fd8"');
+    expect(promoted).toContain('new THREE.HemisphereLight("#ffffff"');
+    expect(promoted).not.toContain("#ffe2a0");
+  });
+
+  it("allows targeted ceiling edits to add ceiling geometry without treating it as layout drift", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(
+      path.join(root, "roomScene.ts"),
+      ceilingPanelSceneSource({
+        title: "Original room",
+        background: "#ffffff",
+        floor: "#8a8479",
+        wall: "#d7d2c8",
+        ceiling: "#e7e2da",
+        light: "#ffffff",
+      }),
+      "utf8",
+    ));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Add an office-style ceiling panel treatment", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain("ceilingPanelGeometry");
+    expect(promoted).toContain('color: "#8a8479"');
+    expect(promoted).toContain('color: "#d7d2c8"');
+  });
+
+  it("allows prompts that explicitly target multiple scene areas in one edit", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(path.join(root, "roomScene.ts"), targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#fff06a",
+      wall: "#5d8fd8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    }), "utf8"));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Make the carpet yellow and the walls blue", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain('color: "#fff06a"');
+    expect(promoted).toContain('color: "#5d8fd8"');
+    expect(promoted).toContain('color: "#f1eee8"');
+  });
+
+  it("allows furniture edits to add object geometry without treating it as layout drift", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(
+      path.join(root, "roomScene.ts"),
+      chairSceneSource({
+        title: "Original room",
+        background: "#ffffff",
+        floor: "#8a8479",
+        wall: "#d7d2c8",
+        ceiling: "#f1eee8",
+        light: "#ffffff",
+      }),
+      "utf8",
+    ));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Add an antique wooden chair", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain("chairSeat");
+    expect(promoted).toContain('color: "#8a8479"');
+    expect(promoted).toContain('color: "#d7d2c8"');
+  });
+
+  it("allows doorway and corridor edits to change structural surfaces needed for navigation", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(
+      path.join(root, "roomScene.ts"),
+      doorwaySceneSource({
+        title: "Original room",
+        background: "#ffffff",
+        floor: "#8a8479",
+        wall: "#d7d2c8",
+        ceiling: "#f1eee8",
+        light: "#ffffff",
+      }),
+      "utf8",
+    ));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Create a doorway with a short corridor beyond it", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain("corridorFloor");
+    expect(promoted).toContain("doorway");
+    expect(promoted).toContain('new THREE.HemisphereLight("#ffffff"');
+  });
+
   it("does not promote scene code with unstable Three.js namespace type annotations", async () => {
     const root = await mkRoomRoot();
     await writeFile(path.join(root, "activeRoomScene.ts"), "export const roomTitle = 'Still valid';\n", "utf8");
@@ -150,9 +393,10 @@ describe("Codex SDK architect runner", () => {
 
     await runner.run(runInput({ prompt: "Add a texture", currentConfig: emptyRoomConfig }), (event) => events.push(event));
 
-    expect(events.at(-1)).toMatchObject({ type: "error" });
-    expect(events.some((event) => event.type === "scene-updated")).toBe(false);
-    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Still valid");
+    expect(events.some((event) => event.type === "log" && event.message.includes("Cleaned unsafe"))).toBe(true);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.toContain("Broken type");
+    await expect(readFile(path.join(root, "activeRoomScene.ts"), "utf8")).resolves.not.toContain(": THREE.DataTexture");
   });
 
   it("halts with a permission request when Codex proposes a file outside the active room", async () => {
@@ -229,6 +473,119 @@ function roomSceneSource(title: string): string {
     "}",
     "",
   ].join("\n");
+}
+
+function carpetSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string }): string {
+  return targetedSceneSource({ ...options, light: "#ffffff" });
+}
+
+function targetedSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  return [
+    'import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";',
+    "",
+    `export const roomTitle = ${JSON.stringify(options.title)};`,
+    "",
+    "export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {",
+    `  scene.background = new THREE.Color("${options.background}");`,
+    "  const floor = new THREE.Mesh(",
+    "    new THREE.PlaneGeometry(10, 10),",
+    `    new THREE.MeshStandardMaterial({ color: "${options.floor}", roughness: 1 }),`,
+    "  );",
+    "  floor.rotation.x = -Math.PI / 2;",
+    "  root.add(floor);",
+    "  const ceiling = new THREE.Mesh(",
+    "    new THREE.PlaneGeometry(10, 10),",
+    `    new THREE.MeshStandardMaterial({ color: "${options.ceiling}", roughness: 1 }),`,
+    "  );",
+    "  ceiling.position.y = 3;",
+    "  ceiling.rotation.x = Math.PI / 2;",
+    "  root.add(ceiling);",
+    `  const wallMaterial = new THREE.MeshStandardMaterial({ color: "${options.wall}", roughness: 1 });`,
+    "  const wallGeometry = new THREE.PlaneGeometry(10, 3);",
+    "  const walls: Array<[number, number, number, number]> = [",
+    "    [0, 1.5, -5, 0],",
+    "    [0, 1.5, 5, Math.PI],",
+    "    [-5, 1.5, 0, Math.PI / 2],",
+    "    [5, 1.5, 0, -Math.PI / 2],",
+    "  ];",
+    "  for (const [x, y, z, rotationY] of walls) {",
+    "    const wall = new THREE.Mesh(wallGeometry, wallMaterial);",
+    "    wall.position.set(x, y, z);",
+    "    wall.rotation.y = rotationY;",
+    "    root.add(wall);",
+    "  }",
+    `  const ambient = new THREE.HemisphereLight("${options.light}", "#555555", 1.2);`,
+    "  root.add(ambient);",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function ceilingPanelSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  const baseScene = targetedSceneSource(options);
+  return baseScene.replace(
+    "  root.add(ceiling);",
+    [
+      "  root.add(ceiling);",
+      "  const ceilingPanelMaterial = new THREE.MeshStandardMaterial({ color: \"#ebe7df\", roughness: 0.82 });",
+      "  const ceilingPanelGeometry = new THREE.BoxGeometry(1.8, 0.04, 1.8);",
+      "  for (let x = -2; x <= 2; x += 1) {",
+      "    for (let z = -2; z <= 2; z += 1) {",
+      "      const ceilingPanel = new THREE.Mesh(ceilingPanelGeometry, ceilingPanelMaterial);",
+      "      ceilingPanel.position.set(x * 2, 2.97, z * 2);",
+      "      root.add(ceilingPanel);",
+      "    }",
+      "  }",
+    ].join("\n"),
+  );
+}
+
+function chairSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  return targetedSceneSource(options).replace(
+    "  const ambient = new THREE.HemisphereLight",
+    [
+      "  const chairMaterial = new THREE.MeshStandardMaterial({ color: \"#6c4428\", roughness: 0.86 });",
+      "  const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.12, 0.68), chairMaterial);",
+      "  chairSeat.position.set(-3.2, 0.55, -3.15);",
+      "  root.add(chairSeat);",
+      "  const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.95, 0.12), chairMaterial);",
+      "  chairBack.position.set(-3.2, 1.05, -3.45);",
+      "  root.add(chairBack);",
+      "  const ambient = new THREE.HemisphereLight",
+    ].join("\n"),
+  );
+}
+
+function doorwaySceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  const source = targetedSceneSource(options)
+    .replace(
+      "  const floor = new THREE.Mesh(",
+      [
+        "  const corridorFloor = new THREE.Mesh(",
+        "    new THREE.PlaneGeometry(2, 5),",
+        "    new THREE.MeshStandardMaterial({ color: \"#8a8479\", roughness: 1 }),",
+        "  );",
+        "  corridorFloor.position.z = -7.5;",
+        "  corridorFloor.rotation.x = -Math.PI / 2;",
+        "  root.add(corridorFloor);",
+        "  const floor = new THREE.Mesh(",
+      ].join("\n"),
+    )
+    .replace(
+      "  const walls: Array<[number, number, number, number]> = [",
+      [
+        "  const doorway = { width: 1.8 };",
+        "  const northLeftWall = new THREE.Mesh(new THREE.PlaneGeometry(4.1, 3), wallMaterial);",
+        "  northLeftWall.position.set(-2.95, 1.5, -5);",
+        "  root.add(northLeftWall);",
+        "  const northRightWall = new THREE.Mesh(new THREE.PlaneGeometry(4.1, 3), wallMaterial);",
+        "  northRightWall.position.set(2.95, 1.5, -5);",
+        "  root.add(northRightWall);",
+        "  const walls: Array<[number, number, number, number]> = [",
+      ].join("\n"),
+    )
+    .replace("    [0, 1.5, -5, 0],\n", "");
+  return source;
 }
 
 function fileChange(filePath: string): ThreadEvent {

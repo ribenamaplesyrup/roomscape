@@ -18,7 +18,7 @@ interface ClientState {
   promptRuns: number;
   chatGptUsage: string | null;
   rooms: SavedRoom[];
-  activeRunId: string | null;
+  activeRunIds: string[];
   isWorking: boolean;
 }
 
@@ -30,7 +30,7 @@ const state: ClientState = {
   promptRuns: loadStoredSession().promptRuns,
   chatGptUsage: null,
   rooms: [],
-  activeRunId: loadStoredSession().activeRunId,
+  activeRunIds: loadStoredSession().activeRunIds,
   isWorking: loadStoredSession().isWorking,
 };
 
@@ -38,7 +38,7 @@ let renderer: RoomRenderer | null = null;
 let chatGptPoll: number | undefined;
 let usagePoll: number | undefined;
 let posePoll: number | undefined;
-let activeSource: EventSource | null = null;
+const activeSources = new Map<string, EventSource>();
 let chatGptAuthWindow: WindowProxy | null = null;
 
 window.addEventListener("beforeunload", persistSessionState);
@@ -58,8 +58,7 @@ async function boot() {
 
 function renderLanding() {
   clearPolling();
-  activeSource?.close();
-  activeSource = null;
+  closeActiveSources();
   persistSessionState();
   stopPosePersistence();
   renderer?.dispose();
@@ -206,10 +205,9 @@ async function logout() {
     state.promptRuns = 0;
     state.chatGptUsage = null;
     state.rooms = [];
-    state.activeRunId = null;
+    state.activeRunIds = [];
     state.isWorking = false;
-    activeSource?.close();
-    activeSource = null;
+    closeActiveSources();
     clearStoredSession();
     renderLanding();
   }
@@ -219,11 +217,13 @@ async function submitPrompt(event: SubmitEvent) {
   event.preventDefault();
   const form = event.currentTarget as HTMLFormElement;
   const values = Object.fromEntries(new FormData(form).entries());
+  const prompt = String(values.prompt ?? "").trim();
+  if (!prompt) return;
   const result = await api<{ runId: string }>("/api/agent/runs", {
     method: "POST",
-    body: { prompt: values.prompt, model: values.model, currentConfig: state.config },
+    body: { prompt, model: values.model, currentConfig: state.config },
   });
-  state.activeRunId = result.runId;
+  state.activeRunIds = [...state.activeRunIds, result.runId];
   state.isWorking = true;
   persistSessionState();
   updateTelemetry();
@@ -232,21 +232,25 @@ async function submitPrompt(event: SubmitEvent) {
 }
 
 function streamRun(runId: string) {
-  activeSource?.close();
+  if (activeSources.has(runId)) return;
   const source = new EventSource(`/api/agent/runs/${runId}/events`);
-  activeSource = source;
+  activeSources.set(runId, source);
   source.onmessage = (message) => {
     const event = parseAgentEvent(message);
-    if (event) handleAgentEvent(event);
+    if (event) handleAgentEvent(event, runId);
   };
   for (const eventName of ["log", "cost", "room-updated", "scene-updated", "permission-request", "complete", "error"]) {
     source.addEventListener(eventName, (message) => {
       const event = parseAgentEvent(message as MessageEvent);
       if (!event) return;
-      handleAgentEvent(event);
+      handleAgentEvent(event, runId);
       if (event.type === "complete" || event.type === "permission-request" || event.type === "error") {
         source.close();
-        if (activeSource === source) activeSource = null;
+        activeSources.delete(runId);
+        state.activeRunIds = state.activeRunIds.filter((id) => id !== runId);
+        state.isWorking = activeSources.size > 0 || state.activeRunIds.length > 0;
+        updateTelemetry();
+        persistSessionState();
       }
     });
   }
@@ -261,15 +265,12 @@ function parseAgentEvent(message: MessageEvent): AgentEvent | null {
   }
 }
 
-function handleAgentEvent(event: AgentEvent) {
+function handleAgentEvent(event: AgentEvent, runId?: string) {
   if (event.type === "log") state.logs.push(event.message);
   if (event.type === "cost") state.totalCost += event.usd;
   if (event.type === "permission-request") state.logs.push(`PERMISSION REQUIRED: ${event.request.reason} -> ${event.request.requestedPath}`);
   if (event.type === "error") state.logs.push(`ERROR: ${event.message}`);
-  if (event.type === "complete" || event.type === "permission-request" || event.type === "error") {
-    state.activeRunId = null;
-    state.isWorking = false;
-  }
+  if (event.type === "complete" && runId) state.logs.push(`Run complete: ${runId.slice(0, 8)}.`);
   if (event.type === "room-updated") {
     state.promptRuns += 1;
     const pose = renderer?.pose();
@@ -301,10 +302,9 @@ async function resetRoom() {
   state.config = result.config;
   state.logs = [];
   state.promptRuns = 0;
-  state.activeRunId = null;
+  state.activeRunIds = [];
   state.isWorking = false;
-  activeSource?.close();
-  activeSource = null;
+  closeActiveSources();
   renderer?.applyScene(activeRoomScene);
   const roomName = document.querySelector<HTMLInputElement>("#room-name");
   if (roomName) roomName.value = result.config.name;
@@ -379,8 +379,13 @@ function clearPolling() {
 }
 
 function reconnectActiveRun(): void {
-  if (!state.activeRunId || activeSource) return;
-  streamRun(state.activeRunId);
+  for (const runId of state.activeRunIds) streamRun(runId);
+  state.isWorking = state.activeRunIds.length > 0;
+}
+
+function closeActiveSources(): void {
+  for (const source of activeSources.values()) source.close();
+  activeSources.clear();
 }
 
 function startPosePersistence(): void {
@@ -400,7 +405,7 @@ function restoreStoredPose(): void {
 interface StoredSession {
   logs: string[];
   promptRuns: number;
-  activeRunId: string | null;
+  activeRunIds: string[];
   isWorking: boolean;
   pose: CameraPose | null;
 }
@@ -413,7 +418,11 @@ function loadStoredSession(): StoredSession {
     return {
       logs: Array.isArray(parsed.logs) ? parsed.logs.filter((entry): entry is string => typeof entry === "string") : [],
       promptRuns: typeof parsed.promptRuns === "number" ? parsed.promptRuns : 0,
-      activeRunId: typeof parsed.activeRunId === "string" ? parsed.activeRunId : null,
+      activeRunIds: Array.isArray(parsed.activeRunIds)
+        ? parsed.activeRunIds.filter((entry): entry is string => typeof entry === "string")
+        : typeof (parsed as { activeRunId?: unknown }).activeRunId === "string"
+          ? [(parsed as { activeRunId: string }).activeRunId]
+          : [],
       isWorking: Boolean(parsed.isWorking),
       pose: isCameraPose(parsed.pose) ? parsed.pose : null,
     };
@@ -427,7 +436,7 @@ function persistSessionState(): void {
     const payload: StoredSession = {
       logs: state.logs,
       promptRuns: state.promptRuns,
-      activeRunId: state.activeRunId,
+      activeRunIds: state.activeRunIds,
       isWorking: state.isWorking,
       pose: renderer?.pose() ?? loadStoredSession().pose,
     };
@@ -442,7 +451,7 @@ function clearStoredSession(): void {
 }
 
 function emptyStoredSession(): StoredSession {
-  return { logs: [], promptRuns: 0, activeRunId: null, isWorking: false, pose: null };
+  return { logs: [], promptRuns: 0, activeRunIds: [], isWorking: false, pose: null };
 }
 
 function isCameraPose(value: unknown): value is CameraPose {

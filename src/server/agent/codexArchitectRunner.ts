@@ -49,7 +49,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
       const initialTurn = await thread.runStreamed(buildArchitectPrompt(input, currentScene));
       if (await this.streamTurn(initialTurn.events, emit)) return;
 
-      const sceneSource = await this.validateOrRepairScene(thread, input, emit, lastGoodScene);
+      const sceneSource = await this.validateOrRepairScene(thread, input, emit, currentScene, lastGoodScene);
       if (!sceneSource) return;
       await this.roomCode.writeActiveSceneSource(sceneSource);
       emit({ type: "scene-updated", at: new Date().toISOString() });
@@ -72,13 +72,22 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     thread: CodexThread,
     input: ArchitectRunInput,
     emit: (event: AgentEvent) => void,
+    originalScene: string,
     lastGoodScene: string,
   ): Promise<string | null> {
     for (let attempt = 0; attempt <= this.maxRepairAttempts; attempt += 1) {
       const sceneSource = await this.roomCode.readRawScene();
-      const validationErrors = this.roomCode.validateSceneSource(sceneSource);
+      const normalizedSource = this.roomCode.normalizeSceneSource(sceneSource);
+      if (normalizedSource !== sceneSource) {
+        await this.roomCode.writeSceneSource(normalizedSource);
+        emit(log("Cleaned unsafe Three.js namespace type annotations before validation."));
+      }
+      const validationErrors = [
+        ...this.roomCode.validateSceneSource(normalizedSource),
+        ...validateTargetedEditScope(input.prompt, originalScene, normalizedSource),
+      ];
       if (validationErrors.length === 0) {
-        return sceneSource;
+        return normalizedSource;
       }
       if (attempt >= this.maxRepairAttempts) {
         await this.roomCode.writeSceneSource(lastGoodScene);
@@ -154,7 +163,11 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
     "Do not write THREE.* TypeScript type annotations such as : THREE.DataTexture; let values infer their types inside buildRoom.",
     "Avoid indexed array mutation patterns that can produce possibly-undefined TypeScript errors; destructure fixed object groups before setting properties.",
+    "Make the smallest targeted change that satisfies the user. If the user names one surface, object, color, material, or feature, preserve unrelated scene code, palette, layout, lighting, walls, floor, ceiling, fog, and camera-adjacent assumptions.",
+    "For targeted requests, edit only the named scene areas. For example: floor/carpet requests only change floor/carpet material or texture; wall requests only change walls; ceiling requests only change ceiling; lighting requests only change lights/fixtures. Do not change other scene areas unless explicitly requested.",
     "Build all geometry, materials, textures, fog, and lights inside buildRoom by adding objects to root and setting scene.background/fog as needed.",
+    "The world can expand beyond the starter 10x10 room. When adding a doorway, hall, exterior, or adjacent room, make it real navigable space with a walkable floor and visible continuation, not just a decorative door on a wall.",
+    "Walls and solid meshes are treated as physical obstacles at camera height; leave actual gaps in wall geometry where the user should be able to walk through.",
     "For material requests, implement real Three.js materials and procedural DataTexture work where useful. Do not use CanvasTexture, document.createElement, or any DOM canvas API.",
     "Do not fake a floor material with a raised slab unless the user asks for a rug or object.",
     "Optimize for real-time browser use: avoid unbounded loops, huge geometries, external assets, and excessive lights.",
@@ -173,8 +186,10 @@ function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, valid
     "Repair ./roomScene.ts so it satisfies validation while still fulfilling the original user request.",
     "Edit only ./roomScene.ts. Do not access any other file.",
     "Do not remove the user's intended visual change; implement it another safe way if the current approach violates constraints.",
+    "If validation says the edit changed unrelated scene areas, restore those unrelated areas and keep only the requested targeted change.",
     "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
     "Use Three.js geometry, materials, lights, fog, and procedural DataTexture only. Do not use DOM APIs, CanvasTexture, renderer/camera creation, network calls, or timers.",
+    "If the request involves expanding the room, doorway, hall, exterior, or adjacent room, make the extension real navigable space with actual gaps in wall geometry and a walkable floor.",
     "Do not write THREE.* TypeScript namespace annotations.",
     "",
     "Validation errors:",
@@ -190,6 +205,54 @@ function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, valid
 
 function log(message: string): AgentEvent {
   return { type: "log", message, at: new Date().toISOString() };
+}
+
+function validateTargetedEditScope(prompt: string, before: string, after: string): string[] {
+  const targetedDomains = inferTargetedDomains(prompt);
+  if (targetedDomains.size === 0) return [];
+  const allowedDomains = expandAllowedTargetDomains(targetedDomains);
+  const changedDomains = protectedEditDomains.filter((domain) => !allowedDomains.has(domain.key) && domainLines(before, domain.pattern) !== domainLines(after, domain.pattern));
+  if (changedDomains.length === 0) return [];
+  const requestedAreas = [...targetedDomains].map((key) => protectedEditDomains.find((domain) => domain.key === key)?.label ?? key).join(", ");
+  return [
+    `The user asked for a targeted change to ${requestedAreas}, but the edit also changed ${changedDomains.map((domain) => domain.label).join(", ")}. Preserve unrelated scene areas and only update the requested target.`,
+  ];
+}
+
+function expandAllowedTargetDomains(targetedDomains: Set<string>): Set<string> {
+  const allowedDomains = new Set(targetedDomains);
+  if (targetedDomains.has("layout")) {
+    allowedDomains.add("floor");
+    allowedDomains.add("walls");
+    allowedDomains.add("ceiling");
+  }
+  return allowedDomains;
+}
+
+const protectedEditDomains = [
+  { key: "floor", label: "floor/carpet", promptPattern: /\b(floor|carpet|rug|ground)\b/i, pattern: /\b(floor|carpet|rug|ground)\b/i },
+  { key: "walls", label: "walls", promptPattern: /\b(wall|walls|wallpaper|paint)\b/i, pattern: /\b(wall|walls|wallpaper|wallMaterial|wallGeometry|addWall)\b/i },
+  { key: "ceiling", label: "ceiling", promptPattern: /\b(ceiling|coffer|coffered|acoustic tile|ceiling tile)\b/i, pattern: /\b(ceiling|ceilingMaterial|ceilingTexture|ceilingGrid)\b/i },
+  { key: "background", label: "background/fog", promptPattern: /\b(background|fog|sky|atmosphere)\b/i, pattern: /scene\.background|scene\.fog|new THREE\.Fog/i },
+  { key: "lighting", label: "lighting", promptPattern: /\b(light|lights|lighting|lamp|fixture|glow|shadow)\b/i, pattern: /\b(?:ambient|directional|point|spot|hemisphere)?light\b|THREE\.\w*Light|fixture/i },
+  { key: "layout", label: "layout dimensions/openings", promptPattern: /\b(layout|room size|dimension|dimensions|expand|extend|door|doorway|opening|corridor|hall|adjacent room|wall opening)\b/i, pattern: /\b(roomHalf|roomWidth|roomDepth|wallHeight|corridor|door|doorway|opening|hall|adjacent|extension|wallConfigs|wallPositions)\b/i },
+  { key: "furniture", label: "furniture/objects", promptPattern: /\b(sofa|table|chair|desk|bed|shelf|cabinet|object|statue|plant|column)\b/i, pattern: /\b(sofa|table|chair|desk|bed|shelf|cabinet|object|statue|plant|column)\b/i },
+];
+
+function domainLines(source: string, pattern: RegExp): string {
+  return source
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => pattern.test(line))
+    .join("\n");
+}
+
+function inferTargetedDomains(prompt: string): Set<string> {
+  const domains = new Set<string>();
+  for (const domain of protectedEditDomains) {
+    if (domain.promptPattern.test(prompt)) domains.add(domain.key);
+  }
+  return domains;
 }
 
 function usageCost(usage: Usage): AgentEvent {
