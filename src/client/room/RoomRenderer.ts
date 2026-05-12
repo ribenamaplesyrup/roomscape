@@ -451,6 +451,7 @@ export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.6
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     if (object.userData.collider === false || object.userData.walkable === true) return;
+    if (isDecorativeNavigationGeometry(object.geometry)) return;
     const bounds = new THREE.Box3().setFromObject(object);
     if (bounds.isEmpty()) return;
     if (bounds.max.y < eyeHeight - 0.55 || bounds.min.y > eyeHeight + 0.45) return;
@@ -462,6 +463,10 @@ export function collectNavigationColliders(root: THREE.Object3D, eyeHeight = 1.6
     colliders.push(bounds);
   });
   return colliders;
+}
+
+function isDecorativeNavigationGeometry(geometry: THREE.BufferGeometry): boolean {
+  return geometry.type === "TubeGeometry";
 }
 
 function isMeaningfulCollider(bounds: THREE.Box3): boolean {

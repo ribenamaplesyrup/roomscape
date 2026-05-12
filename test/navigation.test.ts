@@ -54,6 +54,30 @@ describe("first-person navigation", () => {
     expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, -2), colliders)).toBe(false);
   });
 
+  it("does not turn decorative tube arches into invisible walls", () => {
+    const root = new THREE.Group();
+    const arch = new THREE.Mesh(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-4, 1.1, -2),
+          new THREE.Vector3(0, 4.5, -2),
+          new THREE.Vector3(4, 1.1, -2),
+        ]),
+        16,
+        0.08,
+        8,
+        false,
+      ),
+      new THREE.MeshBasicMaterial(),
+    );
+    root.add(arch);
+
+    const colliders = collectNavigationColliders(root);
+
+    expect(colliders).toHaveLength(0);
+    expect(positionIntersectsColliders(new THREE.Vector3(0, 1.65, -2), colliders)).toBe(false);
+  });
+
   it("detects generated animation hooks only when the scene asks for continuous rendering", () => {
     const scene = new THREE.Scene();
     const root = new THREE.Group();
