@@ -132,8 +132,10 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(saved.body.room.sceneSource).toContain("export function buildRoom");
 
     await writeFile(path.join(roomRoot, "activeRoomScene.ts"), "export const roomTitle = 'Changed';\n", "utf8");
-    const loaded = await request<{ room: { id: string } }>(handler, "GET", `/api/rooms/${saved.body.room.id}`, undefined, sessionCookie);
+    const loaded = await request<{ room: { id: string; config: { name: string } } }>(handler, "GET", `/api/rooms/${saved.body.room.id}`, undefined, sessionCookie);
     expect(loaded.body.room.id).toBe(saved.body.room.id);
+    expect(loaded.body.room.config.name).toBe("Saved scene");
+    await expect(readFile(path.join(roomRoot, "roomConfig.ts"), "utf8")).resolves.toContain('name": "Saved scene"');
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
   });
 
