@@ -5,8 +5,9 @@
 Roomscape keeps the trusted harness separate from the room-editing workspace:
 
 - The app server owns authentication, encrypted OpenAI credentials, user rooms, cost tracking, audit logs, and permission approvals.
-- The active room sandbox is `src/client/rooms/active`.
+- The active room sandbox is `sandbox/rooms/active`.
 - The agent runner may only read or write inside that active room directory.
+- The host app imports the generated room module across an explicit Vite filesystem allow-list, keeping application code and agent-owned code separate while preserving hot reload.
 - Any attempted path escape creates a formal permission request and halts the run.
 
 This mirrors the OpenAI Agents SDK sandbox guidance: keep the harness as the control plane and let the sandbox be the execution plane for files, commands, ports, and generated artifacts.

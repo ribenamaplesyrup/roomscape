@@ -2,7 +2,7 @@ import "./styles/app.css";
 import type { AgentEvent, PublicUser, SavedRoom } from "../shared/api";
 import { modelOptions } from "../shared/models";
 import type { RoomConfig } from "../shared/room";
-import { roomConfig } from "./rooms/active/roomConfig";
+import { roomConfig } from "../../sandbox/rooms/active/roomConfig";
 import { RoomRenderer } from "./room/RoomRenderer";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -208,7 +208,7 @@ function escapeHtml(value: string): string {
 }
 
 if (import.meta.hot) {
-  import.meta.hot.accept("./rooms/active/roomConfig", (module) => {
+  import.meta.hot.accept("../../sandbox/rooms/active/roomConfig", (module) => {
     if (!module?.roomConfig) return;
     const pose = renderer?.pose();
     state.config = module.roomConfig;

@@ -1,4 +1,4 @@
-import type { RoomConfig } from "../../../shared/room";
+import type { RoomConfig } from "../../../src/shared/room";
 
 export const roomConfig = {
   name: "Bare Room",

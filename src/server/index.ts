@@ -17,7 +17,7 @@ const vite = process.env.NODE_ENV === "production"
     });
 
 const store = new JsonStore(roomscapeDataPath(cwd));
-const roomCode = new RoomCodeRepository(path.join(cwd, "src/client/rooms/active"));
+const roomCode = new RoomCodeRepository(path.join(cwd, "sandbox/rooms/active"));
 const runner = new DeterministicArchitectRunner(roomCode);
 const bus = new AgentRunBus();
 const staticRoot = path.join(cwd, "dist/client");

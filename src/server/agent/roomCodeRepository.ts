@@ -23,7 +23,7 @@ export class RoomCodeRepository {
     }
     await mkdir(path.dirname(decision.normalizedPath), { recursive: true });
     const body = [
-      'import type { RoomConfig } from "../../../shared/room";',
+      'import type { RoomConfig } from "../../../src/shared/room";',
       "",
       "export const roomConfig = " + JSON.stringify(config, null, 2) + " satisfies RoomConfig;",
       "",
