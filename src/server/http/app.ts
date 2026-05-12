@@ -80,6 +80,10 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       sendJson(res, 200, { user: await auth.userForSession(readCookie(req, "roomscape_session")) });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/health") {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/start") {
       const bridge = requireCodexBridge(codex);
       const login = await mapCodexErrors(() => bridge.startChatGptLogin());
@@ -265,7 +269,9 @@ class HttpError extends Error {
   }
 }
 
-export function roomscapeDataPath(cwd = process.cwd()): string {
+export function roomscapeDataPath(cwd = process.cwd(), env = process.env): string {
+  if (env.ROOMSCAPE_DATA_PATH) return env.ROOMSCAPE_DATA_PATH;
+  if (env.ROOMSCAPE_DATA_DIR) return path.join(env.ROOMSCAPE_DATA_DIR, "data.json");
   return path.join(cwd, ".roomscape", "data.json");
 }
 

@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AgentRunBus, type ArchitectRunner } from "../src/server/agent/architectRunner";
 import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
-import { createApp } from "../src/server/http/app";
+import { createApp, roomscapeDataPath } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
 
@@ -49,6 +49,26 @@ const noopRunner: ArchitectRunner = {
 };
 
 describe("ChatGPT auth HTTP flow", () => {
+  it("serves a healthcheck without requiring authentication", async () => {
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(await mkdtemp(path.join(os.tmpdir(), "roomscape-http-health-"))),
+      codex: new FakeCodexBridge(),
+    });
+
+    const health = await request<{ ok: boolean }>(handler, "GET", "/api/health");
+    expect(health.status).toBe(200);
+    expect(health.body.ok).toBe(true);
+  });
+
+  it("allows deployment configuration to move the JSON store path", () => {
+    expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_PATH: "/data/roomscape.json" })).toBe("/data/roomscape.json");
+    expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "data.json"));
+    expect(roomscapeDataPath("/app", {})).toBe(path.join("/app", ".roomscape", "data.json"));
+  });
+
   it("creates a session from an existing Codex ChatGPT account when popups are unavailable", async () => {
     const codex = new FakeCodexBridge();
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-existing-"));

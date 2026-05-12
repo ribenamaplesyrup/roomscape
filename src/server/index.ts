@@ -9,7 +9,7 @@ import { createApp, roomscapeDataPath } from "./http/app";
 import { JsonStore } from "./storage/jsonStore";
 
 const port = Number(process.env.PORT ?? 8787);
-const host = process.env.HOST ?? "127.0.0.1";
+const host = process.env.HOST ?? "0.0.0.0";
 const hmrPort = Number(process.env.VITE_HMR_PORT ?? port + 10_000);
 const cwd = process.cwd();
 const vite = process.env.NODE_ENV === "production"

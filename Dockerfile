@@ -7,10 +7,12 @@ RUN npm ci
 
 COPY . .
 
+RUN npm run build
+
 ENV HOST=0.0.0.0
-ENV PORT=8788
-ENV VITE_HMR_PORT=18788
+ENV PORT=8787
+ENV NODE_ENV=production
 
-EXPOSE 8788 18788
+EXPOSE 8787
 
-CMD ["npm", "run", "dev"]
+CMD ["npm", "start"]
