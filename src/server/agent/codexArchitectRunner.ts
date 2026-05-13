@@ -242,8 +242,8 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "Judge every request by rendered browser appearance, not by whether the code names or claims the right thing. The user sees pixels, not source code.",
     "Default to the most immersive user-visible version of the requested change that remains performant: strong silhouettes, real-world proportions, layered construction, procedural texture detail, careful material roughness/metalness, and lighting-aware placement.",
     "Color, texture, atmosphere, scale, object quality, and layout requests are about rendered appearance. Account for existing lights, surface normals, tone mapping, shadows, camera position, contrast, and material maps so the user-visible result matches the request.",
-    "If the user names one surface, object, color, material, or feature, preserve unrelated scene code, palette, layout, lighting, walls, floor, ceiling, fog, and camera-adjacent assumptions.",
-    "For targeted requests, edit only the named scene areas. For example: floor/carpet requests only change floor/carpet material or texture; wall requests only change walls; ceiling surface/panel/material requests only change ceiling surfaces; lighting requests only change lights/fixtures. Do not change other scene areas unless explicitly requested.",
+    "If the user names one surface, object, color, material, or feature, preserve the core intent of unrelated scene areas while allowing adjacent supporting details that make the requested change look integrated and crafted.",
+    "For explicitly narrow requests, such as when the user says only, just, keep the rest unchanged, or do not change anything else, edit only the named scene areas. For ordinary requests, allow tasteful adjacent changes that improve the rendered result without turning the scene into a different concept.",
     "Ceiling height, room height, taller, lower, raised ceiling, double-height, and other volume changes are layout requests, not ceiling-surface requests. Coordinate the ceiling, walls, vertical positions, openings, and relevant lights so the rendered room remains continuous with no gaps.",
     "Scene code may use pure helper functions and constants in roomScene.ts for complex objects, procedural textures, reusable materials, and layout utilities.",
     "Instantiate Three.js objects from buildRoom or helper functions called by buildRoom, then add them to root and set scene.background/fog as needed.",
@@ -438,6 +438,7 @@ function nextEvent(iterator: AsyncIterator<ThreadEvent>, signal?: AbortSignal): 
 }
 
 function validateTargetedEditScope(prompt: string, before: string, after: string): string[] {
+  if (!shouldApplyNarrowTargetedValidation(prompt)) return [];
   const targetedDomains = inferTargetedDomains(prompt);
   if (targetedDomains.size === 0) return [];
   const allowedDomains = expandAllowedTargetDomains(targetedDomains);
@@ -447,6 +448,10 @@ function validateTargetedEditScope(prompt: string, before: string, after: string
   return [
     `The user asked for a targeted change to ${requestedAreas}, but the edit also changed ${changedDomains.map((domain) => domain.label).join(", ")}. Preserve unrelated scene areas and only update the requested target.`,
   ];
+}
+
+function shouldApplyNarrowTargetedValidation(prompt: string): boolean {
+  return /\b(only|just|strictly|targeted|scoped|nothing else|do not|don't|dont|without changing|leave .* unchanged|preserve .* unchanged|keep .* unchanged|keep the rest|rest unchanged)\b/i.test(prompt);
 }
 
 function expandAllowedTargetDomains(targetedDomains: Set<string>): Set<string> {
@@ -471,7 +476,7 @@ const protectedEditDomains = [
   { key: "background", label: "background/fog", promptPattern: /\b(background|fog|sky|atmosphere)\b/i, pattern: /scene\.background|scene\.fog|new THREE\.Fog/i },
   { key: "lighting", label: "lighting", promptPattern: /\b(light|lights|lighting|lamp|fixture|glow|shadow)\b/i, pattern: /\b(?:ambient|directional|point|spot|hemisphere)?light\b|THREE\.\w*Light|fixture/i },
   { key: "layout", label: "layout dimensions/openings", promptPattern: /\b(layout|room size|dimension|dimensions|height|double-height|double height|taller|lower|raise|raised|expand|extend|door|doorway|opening|corridor|hall|adjacent room|wall opening)\b/i, pattern: /\b(roomHalf|roomWidth|roomDepth|roomHeight|wallHeight|ceilingHeight|corridor|door|doorway|opening|hall|adjacent|extension|wallConfigs|wallPositions)\b/i },
-  { key: "furniture", label: "furniture/objects", promptPattern: /\b(sofa|table|chair|desk|bed|shelf|cabinet|object|statue|plant|column)\b/i, pattern: /\b(sofa|table|chair|desk|bed|shelf|cabinet|object|statue|plant|column)\b/i },
+  { key: "furniture", label: "furniture/objects", promptPattern: /\b(sofa\w*|table\w*|chair\w*|desk\w*|bed\w*|shel(?:f|ves|ving)\w*|cabinet\w*|drawer\w*|filing\w*|object\w*|statue\w*|plant\w*|column\w*)\b/i, pattern: /\b(sofa\w*|table\w*|chair\w*|desk\w*|bed\w*|shel(?:f|ves|ving)\w*|cabinet\w*|drawer\w*|filing\w*|object\w*|statue\w*|plant\w*|column\w*)\b/i },
 ];
 
 function domainLines(source: string, pattern: RegExp): string {
@@ -487,7 +492,17 @@ function inferTargetedDomains(prompt: string): Set<string> {
   for (const domain of protectedEditDomains) {
     if (domain.promptPattern.test(prompt)) domains.add(domain.key);
   }
+  if (isIncidentalWallPlacement(prompt)) domains.delete("walls");
+  if (isIncidentalFloorPlacement(prompt)) domains.delete("floor");
   return domains;
+}
+
+function isIncidentalWallPlacement(prompt: string): boolean {
+  return /\b(against|along|beside|near|next to|by)\s+(?:the\s+)?walls?\b/i.test(prompt);
+}
+
+function isIncidentalFloorPlacement(prompt: string): boolean {
+  return /\b(on|onto|across|along|near)\s+(?:the\s+)?(?:floor|ground)\b/i.test(prompt);
 }
 
 function usageCost(usage: Usage): AgentEvent {

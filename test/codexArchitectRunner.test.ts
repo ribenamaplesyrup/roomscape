@@ -101,7 +101,7 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
     expect(codex.thread.prompt).toContain("Use live PointLight and SpotLight objects sparingly");
     expect(codex.thread.prompt).toContain("do not create visible transparent cone");
-    expect(codex.thread.prompt).toContain("For targeted requests");
+    expect(codex.thread.prompt).toContain("For explicitly narrow requests");
     expect(codex.thread.prompt).toContain("Ceiling height, room height");
     expect(codex.thread.prompt).toContain("rendered room remains continuous with no gaps");
     expect(codex.thread.prompt).not.toContain("Gulf Futurist");
@@ -275,7 +275,7 @@ describe("Codex SDK architect runner", () => {
     const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
     const events: AgentEvent[] = [];
 
-    await runner.run(runInput({ prompt: "Make the carpet light yellow", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+    await runner.run(runInput({ prompt: "Only make the carpet light yellow and keep the rest unchanged", currentConfig: emptyRoomConfig }), (event) => events.push(event));
 
     expect(codex.thread.prompts).toHaveLength(2);
     expect(codex.thread.prompts[1]).toContain("targeted change to floor/carpet");
@@ -325,7 +325,7 @@ describe("Codex SDK architect runner", () => {
     const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
     const events: AgentEvent[] = [];
 
-    await runner.run(runInput({ prompt: "Make the walls blue", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+    await runner.run(runInput({ prompt: "Only make the walls blue and keep the rest unchanged", currentConfig: emptyRoomConfig }), (event) => events.push(event));
 
     expect(codex.thread.prompts).toHaveLength(2);
     expect(codex.thread.prompts[1]).toContain("targeted change to walls");
@@ -606,6 +606,42 @@ describe("Codex SDK architect runner", () => {
     expect(promoted).toContain("chairSeat");
     expect(promoted).toContain('color: "#8a8479"');
     expect(promoted).toContain('color: "#d7d2c8"');
+  });
+
+  it("allows creative cabinet placement against a wall without wall-only repair loops", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(
+      path.join(root, "roomScene.ts"),
+      cabinetSceneSource({
+        title: "Original room",
+        background: "#ffffff",
+        floor: "#8a8479",
+        wall: "#d7d2c8",
+        ceiling: "#f1eee8",
+        light: "#ffffff",
+      }),
+      "utf8",
+    ));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Make the filing cabinets larger and stack them against the wall", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "log" && event.message.includes("targeted change"))).toBe(false);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain("filingCabinetStack");
+    expect(promoted).toContain("pulledDrawer");
   });
 
   it("allows doorway and corridor edits to change structural surfaces needed for navigation", async () => {
@@ -919,6 +955,24 @@ function chairSceneSource(options: { title: string; background: string; floor: s
       "  const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.95, 0.12), chairMaterial);",
       "  chairBack.position.set(-3.2, 1.05, -3.45);",
       "  root.add(chairBack);",
+      "  const ambient = new THREE.HemisphereLight",
+    ].join("\n"),
+  );
+}
+
+function cabinetSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  return targetedSceneSource(options).replace(
+    "  const ambient = new THREE.HemisphereLight",
+    [
+      "  const filingCabinetMaterial = new THREE.MeshStandardMaterial({ color: \"#6f7678\", roughness: 0.72, metalness: 0.25 });",
+      "  const filingCabinetStack = new THREE.Group();",
+      "  filingCabinetStack.position.set(4.35, 0.75, -2.4);",
+      "  const cabinetBody = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.5, 1.1), filingCabinetMaterial);",
+      "  filingCabinetStack.add(cabinetBody);",
+      "  const pulledDrawer = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.24, 0.42), filingCabinetMaterial);",
+      "  pulledDrawer.position.set(-0.36, 0.28, 0);",
+      "  filingCabinetStack.add(pulledDrawer);",
+      "  root.add(filingCabinetStack);",
       "  const ambient = new THREE.HemisphereLight",
     ].join("\n"),
   );
