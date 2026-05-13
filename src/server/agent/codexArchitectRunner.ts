@@ -24,7 +24,7 @@ export interface CodexSdkArchitectRunnerOptions {
   maxRegenerationAttempts?: number;
 }
 
-/** Runs the Architect through the Codex SDK while keeping writes scoped to the active room sandbox. */
+/** Runs the Architect through the Codex SDK while keeping writes scoped to the active generated-room workspace. */
 export class CodexSdkArchitectRunner implements ArchitectRunner {
   private readonly codex: CodexThreadFactory;
   private readonly usesInjectedCodex: boolean;

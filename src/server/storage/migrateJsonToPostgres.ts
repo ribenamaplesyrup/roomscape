@@ -1,4 +1,4 @@
-import { roomscapeDataPath } from "../http/app";
+import { roomscapeDataPath } from "../config/paths";
 import { JsonStore } from "./jsonStore";
 import { PostgresStore } from "./postgresStore";
 

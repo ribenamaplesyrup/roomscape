@@ -22,6 +22,7 @@ The dev server runs at `http://127.0.0.1:8787` by default.
 - `src/client/room/RoomRenderer.ts`: Three.js renderer, first-person navigation, generated animation hooks, collision collection.
 - `src/client/room/sceneTypes.ts`: generated scene module contract.
 - `src/server/index.ts`: server bootstrap, Vite middleware, stores, Codex bridge, runner wiring.
+- `src/server/config/paths.ts`: runtime data and generated-room workspace path rules.
 - `src/server/http/app.ts`: HTTP API routes, run queue, active room state, SSE subscriptions.
 - `src/server/agent/codexArchitectRunner.ts`: live Codex SDK runner and generated-scene prompt/repair policy.
 - `src/server/agent/roomCodeRepository.ts`: sandboxed reads/writes and generated scene validation.
@@ -29,12 +30,12 @@ The dev server runs at `http://127.0.0.1:8787` by default.
 - `src/server/codex/appServerClient.ts`: Codex app-server auth and rate-limit bridge.
 - `src/server/storage/`: file and memory persistence.
 - `src/shared/`: client/server type contracts.
-- `sandbox/rooms/active/`: generated room config and scene modules.
+- `sandbox/rooms/active/`: checked-in starter generated room config and scene modules.
 - `test/`: Vitest tests for contracts and behavior.
 
 ## Hard Boundaries
 
-- Do not let agent-authored code edit files outside `sandbox/rooms/active`.
+- Do not let agent-authored code edit files outside the active generated-room workspace.
 - Do not expand the live Codex runner's writable roots without updating tests and docs.
 - Do not move auth, audit, rate limits, persistence, or permission decisions into generated scene code.
 - Do not make generated room scenes create renderers, cameras, controls, DOM nodes, network calls, timers, or imports beyond the allowed type-only local import.

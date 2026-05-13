@@ -38,7 +38,7 @@ export class DeterministicArchitectRunner implements ArchitectRunner {
       }
 
       const nextConfig = mutateRoom(input.currentConfig, input.prompt);
-      emit(log("Writing generated Three.js room config inside active sandbox."));
+      emit(log("Writing generated Three.js room config inside the generated-room workspace."));
       await this.roomCode.writeConfig(nextConfig);
       emit(cost(input.model, input.prompt.length, JSON.stringify(nextConfig).length));
       emit({ type: "room-updated", config: nextConfig, at: new Date().toISOString() });
@@ -74,10 +74,6 @@ export class AgentRunBus {
     return () => this.bus.off(runId, listener);
   }
 
-  /** Clears remembered run events so reset and sign-out start from a clean session. */
-  public clear(): void {
-    this.history.clear();
-  }
 }
 
 function mutateRoom(config: RoomConfig, prompt: string): RoomConfig {

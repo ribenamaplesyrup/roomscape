@@ -8,7 +8,7 @@ export interface SandboxDecision {
   permissionRequest?: PermissionRequest;
 }
 
-/** Checks whether an agent-requested path remains inside the active room sandbox. */
+/** Checks whether an agent-requested path remains inside the active generated-room workspace. */
 export function evaluateSandboxPath(sandboxRoot: string, requestedPath: string, reason: string, command?: string): SandboxDecision {
   const root = path.resolve(sandboxRoot);
   const normalizedPath = path.resolve(root, requestedPath);
