@@ -233,7 +233,8 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "Do not read, write, create, delete, or request access to files other than ./roomScene.ts.",
     "You have full creative control over the Three.js scene inside that one file.",
     "The host app owns the camera, controls, UI, renderer, and hot reload. Do not create a renderer, camera, controls, DOM nodes, network calls, timers, or imports beyond type-only local imports.",
-    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
+    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene, effects, lighting, materials }: RoomSceneContext): void.",
+    "Use the host-owned effects, lighting, and materials helpers for advanced rendering polish when they fit: exposure and soft shadows through effects, office troffers and soft spotlights through lighting, and soft glow DataTextures/materials through materials.",
     "For large or directional worlds, set scene.userData.startPose or root.userData.startPose to { position: [x, y, z], rotation: [pitch, yaw, 0] } so saved rooms and resets open onto the main route. This is only a host-owned hint; never create or mutate a camera.",
     "Do not write THREE.* TypeScript type annotations such as : THREE.DataTexture; let values infer their types inside buildRoom.",
     "Avoid indexed array mutation patterns that can produce possibly-undefined TypeScript errors; destructure fixed object groups before setting properties.",
@@ -250,12 +251,13 @@ function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): s
     "Walls and solid meshes are treated as physical obstacles at camera height; leave actual gaps in wall geometry where the user should be able to walk through.",
     "For material and surface requests, implement real Three.js materials and procedural DataTexture work where useful, with visible texture scale, repeat, grain, weave, seams, imperfections, or relief cues. Do not use CanvasTexture, document.createElement, or any DOM canvas API.",
     "For ceilings and other undersides, remember that the visible face may receive little direct light. If the requested surface color must read clearly, use material color, emissive, emissiveIntensity, or carefully scoped local fill light so the rendered surface matches the request.",
+    "For ordinary architectural lighting, do not create visible transparent cone, cylinder, or pyramid meshes to represent light beams unless the user explicitly asks for fog, haze, theatrical beams, or volumetric light. Prefer actual lights, emissive diffuser materials, host lighting helpers, soft glow textures, and material response.",
     "For furniture and object requests, avoid blocky or cartoonish stacked-cube forms unless the user asks for that style. Use real-world scale, recognizable object anatomy, rounded or bevel-like visible edges, cylinders/spheres/lathe/extrude/shape geometry where appropriate, layered details, contact shadows, and subtle material/texture variation.",
     "Prefer a few well-proportioned, carefully modeled parts over many crude boxes. For chairs, tables, lamps, cabinets, and similar objects, include legs/supports, thickness, joins, cushions or trims, and small asymmetries that make the object feel designed.",
     "For animated requests such as flicker, movement, pulsing, blinking, shimmer, or drift, do not use timers or requestAnimationFrame. Instead set scene.userData.isAnimated = true or root.userData.isAnimated = true, then assign scene.userData.update or root.userData.update to a deterministic function that accepts { time, delta, scene, root } and updates the relevant materials/lights. The host will keep rendering while those animation hooks exist.",
     "Do not fake a floor material with a raised slab unless the user asks for a rug or object.",
     "Optimize for real-time browser use: avoid unbounded loops, huge geometries, external assets, and excessive lights.",
-    "Use live PointLight and SpotLight objects sparingly because they directly affect frame rate. Prefer emissive materials, DataTexture glow cues, AmbientLight/HemisphereLight/DirectionalLight, and a few high-impact local lights over many candle/window point lights.",
+    "Use live PointLight and SpotLight objects sparingly because they directly affect frame rate. Prefer host lighting helpers, emissive materials, DataTexture glow cues, AmbientLight/HemisphereLight/DirectionalLight, and a few high-impact local lights over many candle/window point lights.",
     "After editing, summarize the Three.js changes you made.",
     "",
     "Current roomScene.ts:",
@@ -366,7 +368,7 @@ function buildRepairPrompt(input: ArchitectRunInput, invalidScene: string, valid
     "Do not start over unless the existing scene cannot be repaired in place.",
     "If validation says the edit changed unrelated scene areas, restore those unrelated areas and keep only the requested targeted change.",
     "Repairs should keep or improve the rendered appearance and visual ambition of the requested change; do not downgrade to a crude placeholder merely to pass validation.",
-    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
+    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene, effects, lighting, materials }: RoomSceneContext): void.",
     "For large or directional worlds, use scene.userData.startPose or root.userData.startPose as a host-owned camera start hint instead of creating or changing a camera.",
     "Use Three.js geometry, materials, lights, fog, procedural DataTexture, and pure local helper functions only. Do not use DOM APIs, CanvasTexture, renderer/camera creation, network calls, or timers.",
     "Helper functions must be deterministic and local to roomScene.ts; they may build and return Three.js objects, textures, materials, or groups that buildRoom attaches to root.",
@@ -392,7 +394,7 @@ function buildRegenerationPrompt(input: ArchitectRunInput, originalScene: string
     "Edit only ./roomScene.ts. Do not access any other file.",
     "The previous generated scene failed validation; avoid repeating the same mistakes while still fulfilling the original user request.",
     "Prefer a simpler, more reliable implementation if needed, but keep the rendered result atmospheric, crafted, and user-visible rather than sparse placeholders.",
-    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene }: RoomSceneContext): void.",
+    "Keep the module contract: export const roomTitle = string; export function buildRoom({ THREE, root, scene, effects, lighting, materials }: RoomSceneContext): void.",
     "Use scene.userData.startPose or root.userData.startPose for directional worlds instead of creating or mutating a camera.",
     "Use Three.js geometry, materials, lights, fog, procedural DataTexture, and pure local helper functions only. Do not use DOM APIs, CanvasTexture, renderer/camera creation, network calls, or timers.",
     "Do not write THREE.* TypeScript namespace annotations.",
@@ -450,6 +452,11 @@ function validateTargetedEditScope(prompt: string, before: string, after: string
 function expandAllowedTargetDomains(targetedDomains: Set<string>): Set<string> {
   const allowedDomains = new Set(targetedDomains);
   if (targetedDomains.has("layout")) {
+    allowedDomains.add("floor");
+    allowedDomains.add("walls");
+    allowedDomains.add("ceiling");
+  }
+  if (targetedDomains.has("lighting")) {
     allowedDomains.add("floor");
     allowedDomains.add("walls");
     allowedDomains.add("ceiling");

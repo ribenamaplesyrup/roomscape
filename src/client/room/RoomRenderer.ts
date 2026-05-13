@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import type { RoomConfig, RoomObject, SurfaceMaterial, SurfaceTexture } from "../../shared/room";
-import type { RoomSceneModule, RoomSceneStartPose } from "./sceneTypes";
+import type {
+  RoomSceneContext,
+  RoomSceneModule,
+  RoomSceneShadowQuality,
+  RoomSceneSoftGlowTextureOptions,
+  RoomSceneStartPose,
+} from "./sceneTypes";
 
 export interface CameraPose {
   position: [number, number, number];
@@ -9,6 +15,7 @@ export interface CameraPose {
 
 const defaultCameraPosition: [number, number, number] = [0, 1.65, 4];
 const legacyDefaultCameraPosition: [number, number, number] = [0, 1.65, 0];
+const defaultToneMappingExposure = 1.08;
 
 export class RoomRenderer {
   private readonly scene = new THREE.Scene();
@@ -37,7 +44,9 @@ export class RoomRenderer {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.toneMappingExposure = defaultToneMappingExposure;
+    this.renderer.shadowMap.enabled = false;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.mount.append(this.renderer.domElement);
     this.resetPose();
     this.scene.add(this.dynamicObjects);
@@ -65,8 +74,8 @@ export class RoomRenderer {
   public applyScene(module: RoomSceneModule): void {
     this.resetSceneAnimation();
     disposeObject3D(this.dynamicObjects);
-    module.buildRoom({ THREE, root: this.dynamicObjects, scene: this.scene });
-    optimizeGeneratedScenePerformance(this.dynamicObjects);
+    module.buildRoom(this.createSceneContext());
+    optimizeGeneratedScenePerformance(this.dynamicObjects, generatedScenePerformanceOptions(this.dynamicObjects));
     this.animatedScene = hasGeneratedAnimation(this.scene, this.dynamicObjects);
     this.refreshColliders();
     this.requestRender();
@@ -267,11 +276,27 @@ export class RoomRenderer {
   private resetSceneAnimation(): void {
     this.animatedScene = false;
     this.lastFrameTime = 0;
+    this.renderer.toneMappingExposure = defaultToneMappingExposure;
+    this.renderer.shadowMap.enabled = false;
     this.scene.onBeforeRender = () => undefined;
     for (const key of ["animate", "update", "isAnimated", "needsContinuousRender"]) {
       delete this.scene.userData[key];
       delete this.dynamicObjects.userData[key];
     }
+    for (const key of ["generatedShadowBudget", "generatedShadowMapSize"]) {
+      delete this.dynamicObjects.userData[key];
+    }
+  }
+
+  private createSceneContext(): RoomSceneContext {
+    return {
+      THREE,
+      root: this.dynamicObjects,
+      scene: this.scene,
+      effects: createSceneEffects(this.renderer, this.dynamicObjects),
+      lighting: createSceneLightingTools(this.dynamicObjects),
+      materials: createSceneMaterialTools(),
+    };
   }
 
   private updateGeneratedAnimation(time: number, delta: number): void {
@@ -308,6 +333,113 @@ function isLegacyNeutralPose(pose: CameraPose): boolean {
 
 function vectorsEqual(left: [number, number, number], right: [number, number, number]): boolean {
   return left.every((value, index) => Math.abs(value - right[index]!) < 0.0001);
+}
+
+function createSceneEffects(renderer: THREE.WebGLRenderer, root: THREE.Group): RoomSceneContext["effects"] {
+  return {
+    setExposure(exposure) {
+      renderer.toneMappingExposure = THREE.MathUtils.clamp(finiteOr(exposure, defaultToneMappingExposure), 0.35, 2.25);
+    },
+    enableSoftShadows(quality = "medium") {
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      root.userData.generatedShadowBudget = shadowBudgetForQuality(quality);
+      root.userData.generatedShadowMapSize = shadowMapSizeForQuality(quality);
+    },
+  };
+}
+
+function createSceneLightingTools(root: THREE.Group): RoomSceneContext["lighting"] {
+  return {
+    addOfficeTroffer(options) {
+      const size = options.size ?? [1.25, 0.08, 0.5];
+      const [sx, sy, sz] = size;
+      const color = options.color ?? "#f7fbff";
+      const intensity = finiteOr(options.intensity, 1.45);
+      const position = vectorFromTuple(options.position);
+      const targetPosition = vectorFromTuple(options.target ?? [position.x, Math.max(0.45, position.y - 3), position.z]);
+      const group = new THREE.Group();
+      group.position.copy(position);
+      group.name = "HostOfficeTroffer";
+
+      const housing = new THREE.Mesh(
+        new THREE.BoxGeometry(sx + 0.16, Math.max(0.05, sy), sz + 0.16),
+        new THREE.MeshStandardMaterial({ color: "#565b5d", roughness: 0.7, metalness: 0.35 }),
+      );
+      const diffuser = new THREE.Mesh(
+        new THREE.BoxGeometry(sx, Math.max(0.018, sy * 0.35), sz),
+        new THREE.MeshStandardMaterial({
+          color,
+          emissive: color,
+          emissiveIntensity: Math.max(0.6, intensity * 0.55),
+          roughness: 0.42,
+        }),
+      );
+      diffuser.position.y = -Math.max(0.026, sy * 0.5);
+      housing.userData.collider = false;
+      diffuser.userData.collider = false;
+      group.add(housing, diffuser);
+
+      const target = new THREE.Object3D();
+      target.position.copy(targetPosition);
+      target.userData.collider = false;
+      const light = new THREE.SpotLight(
+        color,
+        intensity,
+        finiteOr(options.distance, 7),
+        Math.PI / 3.7,
+        0.82,
+        1.55,
+      );
+      light.position.copy(position).add(new THREE.Vector3(0, -Math.max(0.07, sy), 0));
+      light.target = target;
+      light.castShadow = options.castShadow === true;
+      light.userData.collider = false;
+      configureLightShadow(light, Number(root.userData.generatedShadowMapSize) || 512);
+
+      root.add(group, target, light);
+      return group;
+    },
+    addSoftSpotlight(options) {
+      const position = vectorFromTuple(options.position);
+      const targetPosition = vectorFromTuple(options.target ?? [position.x, Math.max(0, position.y - 3), position.z]);
+      const target = new THREE.Object3D();
+      target.position.copy(targetPosition);
+      target.userData.collider = false;
+      const light = new THREE.SpotLight(
+        options.color ?? "#ffffff",
+        finiteOr(options.intensity, 1),
+        finiteOr(options.distance, 8),
+        finiteOr(options.angle, Math.PI / 4),
+        finiteOr(options.penumbra, 0.75),
+        1.35,
+      );
+      light.position.copy(position);
+      light.target = target;
+      light.castShadow = options.castShadow === true;
+      light.userData.collider = false;
+      configureLightShadow(light, Number(root.userData.generatedShadowMapSize) || 512);
+      root.add(target, light);
+      return light;
+    },
+  };
+}
+
+function createSceneMaterialTools(): RoomSceneContext["materials"] {
+  return {
+    makeSoftGlowTexture: makeSoftGlowTexture,
+    makeGlowMaterial(options = {}) {
+      return new THREE.MeshBasicMaterial({
+        color: options.color ?? "#ffffff",
+        map: makeSoftGlowTexture(options),
+        transparent: true,
+        opacity: THREE.MathUtils.clamp(finiteOr(options.opacity, 0.32), 0, 1),
+        blending: THREE.AdditiveBlending,
+        depthWrite: options.depthWrite ?? false,
+        side: THREE.DoubleSide,
+      });
+    },
+  };
 }
 
 function meshForObject(object: RoomObject): THREE.Object3D | null {
@@ -430,6 +562,13 @@ export function requestPointerLockSafely(element: HTMLElement): Promise<void> | 
 
 const generatedPointLightLimit = 12;
 const generatedSpotLightLimit = 4;
+const defaultGeneratedShadowBudget = 0;
+const defaultGeneratedShadowMapSize = 512;
+
+export interface GeneratedScenePerformanceOptions {
+  maxShadowCastingLights?: number;
+  shadowMapSize?: number;
+}
 
 export interface GeneratedScenePerformanceStats {
   pointLightsRemoved: number;
@@ -437,24 +576,31 @@ export interface GeneratedScenePerformanceStats {
   shadowCastingLightsDisabled: number;
 }
 
-export function optimizeGeneratedScenePerformance(root: THREE.Object3D): GeneratedScenePerformanceStats {
+export function optimizeGeneratedScenePerformance(
+  root: THREE.Object3D,
+  options: GeneratedScenePerformanceOptions = {},
+): GeneratedScenePerformanceStats {
   const pointLights: THREE.PointLight[] = [];
   const spotLights: THREE.SpotLight[] = [];
-  let shadowCastingLightsDisabled = 0;
+  const shadowCastingLights: THREE.Light[] = [];
   root.traverse((object) => {
     if (!(object instanceof THREE.Light)) return;
     if (object.castShadow) {
-      object.castShadow = false;
-      shadowCastingLightsDisabled += 1;
+      shadowCastingLights.push(object);
     }
     if (object instanceof THREE.PointLight) pointLights.push(object);
     if (object instanceof THREE.SpotLight) spotLights.push(object);
   });
 
+  const shadowMapSize = normalizedShadowMapSize(options.shadowMapSize);
   return {
     pointLightsRemoved: removeWeakestLights(pointLights, generatedPointLightLimit),
     spotLightsRemoved: removeWeakestLights(spotLights, generatedSpotLightLimit),
-    shadowCastingLightsDisabled,
+    shadowCastingLightsDisabled: limitShadowCastingLights(
+      shadowCastingLights,
+      options.maxShadowCastingLights ?? defaultGeneratedShadowBudget,
+      shadowMapSize,
+    ),
   };
 }
 
@@ -477,6 +623,89 @@ function lightScore(light: THREE.Light): number {
     return intensity * Math.max(1, Math.min(light.distance || 1, 24));
   }
   return intensity;
+}
+
+function limitShadowCastingLights(lights: THREE.Light[], limit: number, shadowMapSize: number): number {
+  const budget = Math.max(0, Math.floor(limit));
+  const rankedLights = [...lights].sort((a, b) => lightScore(b) - lightScore(a));
+  const keep = new Set(rankedLights.slice(0, budget));
+  let disabled = 0;
+  for (const light of lights) {
+    if (keep.has(light)) {
+      configureLightShadow(light, shadowMapSize);
+      continue;
+    }
+    light.castShadow = false;
+    disabled += 1;
+  }
+  return disabled;
+}
+
+function generatedScenePerformanceOptions(root: THREE.Group): GeneratedScenePerformanceOptions {
+  return {
+    maxShadowCastingLights: Number(root.userData.generatedShadowBudget) || defaultGeneratedShadowBudget,
+    shadowMapSize: Number(root.userData.generatedShadowMapSize) || defaultGeneratedShadowMapSize,
+  };
+}
+
+function configureLightShadow(light: THREE.Light, mapSize: number): void {
+  if (!("shadow" in light)) return;
+  const shadow = light.shadow as THREE.LightShadow<THREE.Camera> | undefined;
+  if (!shadow) return;
+  const size = normalizedShadowMapSize(mapSize);
+  shadow.mapSize.set(size, size);
+  shadow.bias = -0.00018;
+  shadow.normalBias = 0.018;
+}
+
+function normalizedShadowMapSize(value: number | undefined): number {
+  if (!Number.isFinite(value)) return defaultGeneratedShadowMapSize;
+  if (value! >= 1024) return 1024;
+  if (value! >= 512) return 512;
+  return 256;
+}
+
+function shadowBudgetForQuality(quality: RoomSceneShadowQuality): number {
+  if (quality === "high") return 3;
+  if (quality === "low") return 1;
+  return 2;
+}
+
+function shadowMapSizeForQuality(quality: RoomSceneShadowQuality): number {
+  if (quality === "high") return 1024;
+  if (quality === "low") return 256;
+  return 512;
+}
+
+function vectorFromTuple(value: [number, number, number]): THREE.Vector3 {
+  return new THREE.Vector3(finiteOr(value[0], 0), finiteOr(value[1], 0), finiteOr(value[2], 0));
+}
+
+function finiteOr(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) ? value! : fallback;
+}
+
+function makeSoftGlowTexture(options: RoomSceneSoftGlowTextureOptions = {}): THREE.DataTexture {
+  const size = Math.max(16, Math.min(256, Math.floor(finiteOr(options.size, 64))));
+  const innerRadius = THREE.MathUtils.clamp(finiteOr(options.innerRadius, 0.1), 0, 1);
+  const outerRadius = THREE.MathUtils.clamp(finiteOr(options.outerRadius, 0.92), innerRadius + 0.01, 1);
+  const data = new Uint8Array(size * size * 4);
+  const center = (size - 1) * 0.5;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const radius = Math.hypot((x - center) / center, (y - center) / center);
+      const fade = 1 - THREE.MathUtils.smoothstep(radius, innerRadius, outerRadius);
+      const offset = (y * size + x) * 4;
+      data[offset] = 255;
+      data[offset + 1] = 255;
+      data[offset + 2] = 255;
+      data[offset + 3] = Math.round(255 * fade);
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 /** Keeps navigation finite without trapping the user inside the starter room. */

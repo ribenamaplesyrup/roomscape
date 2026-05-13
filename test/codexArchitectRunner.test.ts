@@ -77,6 +77,7 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("Edit only ./roomScene.ts");
     expect(codex.thread.prompt).toContain("full creative control over the Three.js scene");
     expect(codex.thread.prompt).toContain("Keep the module contract");
+    expect(codex.thread.prompt).toContain("effects, lighting, and materials helpers");
     expect(codex.thread.prompt).toContain("Do not write THREE.* TypeScript type annotations");
     expect(codex.thread.prompt).toContain("procedural DataTexture");
     expect(codex.thread.prompt).toContain("Do not use CanvasTexture");
@@ -99,6 +100,7 @@ describe("Codex SDK architect runner", () => {
     expect(codex.thread.prompt).toContain("The world can expand beyond the starter 10x10 room");
     expect(codex.thread.prompt).toContain("leave actual gaps in wall geometry");
     expect(codex.thread.prompt).toContain("Use live PointLight and SpotLight objects sparingly");
+    expect(codex.thread.prompt).toContain("do not create visible transparent cone");
     expect(codex.thread.prompt).toContain("For targeted requests");
     expect(codex.thread.prompt).toContain("Ceiling height, room height");
     expect(codex.thread.prompt).toContain("rendered room remains continuous with no gaps");
@@ -331,6 +333,42 @@ describe("Codex SDK architect runner", () => {
     expect(promoted).toContain('color: "#5d8fd8"');
     expect(promoted).toContain('new THREE.HemisphereLight("#ffffff"');
     expect(promoted).not.toContain("#ffe2a0");
+  });
+
+  it("allows lighting edits to add surface light-response cues", async () => {
+    const root = await mkRoomRoot();
+    const originalScene = targetedSceneSource({
+      title: "Original room",
+      background: "#ffffff",
+      floor: "#8a8479",
+      wall: "#d7d2c8",
+      ceiling: "#f1eee8",
+      light: "#ffffff",
+    });
+    await writeFile(path.join(root, "roomScene.ts"), originalScene, "utf8");
+    await writeFile(path.join(root, "activeRoomScene.ts"), originalScene, "utf8");
+    const codex = new FakeCodex([fileChange("roomScene.ts"), completed()], () => writeFile(
+      path.join(root, "roomScene.ts"),
+      lightingSurfaceCueSceneSource({
+        title: "Original room",
+        background: "#ffffff",
+        floor: "#8a8479",
+        wall: "#d7d2c8",
+        ceiling: "#f1eee8",
+        light: "#fff3cb",
+      }),
+      "utf8",
+    ));
+    const runner = new CodexSdkArchitectRunner(new RoomCodeRepository(root), { codex });
+    const events: AgentEvent[] = [];
+
+    await runner.run(runInput({ prompt: "Make the ceiling lights warmer and brighter", currentConfig: emptyRoomConfig }), (event) => events.push(event));
+
+    expect(codex.thread.prompts).toHaveLength(1);
+    expect(events.some((event) => event.type === "scene-updated")).toBe(true);
+    const promoted = await readFile(path.join(root, "activeRoomScene.ts"), "utf8");
+    expect(promoted).toContain("floorLightPool");
+    expect(promoted).toContain('new THREE.HemisphereLight("#fff3cb"');
   });
 
   it("allows targeted ceiling edits to add ceiling geometry without treating it as layout drift", async () => {
@@ -884,6 +922,23 @@ function chairSceneSource(options: { title: string; background: string; floor: s
       "  const ambient = new THREE.HemisphereLight",
     ].join("\n"),
   );
+}
+
+function lightingSurfaceCueSceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
+  return targetedSceneSource(options)
+    .replace(
+      "  const ambient = new THREE.HemisphereLight",
+      [
+        "  const floorLightPool = new THREE.Mesh(",
+        "    new THREE.CircleGeometry(1.8, 32),",
+        "    new THREE.MeshBasicMaterial({ color: \"#fff0b8\", transparent: true, opacity: 0.2 }),",
+        "  );",
+        "  floorLightPool.rotation.x = -Math.PI / 2;",
+        "  floorLightPool.position.y = 0.012;",
+        "  root.add(floorLightPool);",
+        "  const ambient = new THREE.HemisphereLight",
+      ].join("\n"),
+    );
 }
 
 function doorwaySceneSource(options: { title: string; background: string; floor: string; wall: string; ceiling: string; light: string }): string {
