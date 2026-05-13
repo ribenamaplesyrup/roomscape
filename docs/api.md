@@ -26,6 +26,8 @@ Returns the current public user or `null`.
 
 Starts Codex-managed ChatGPT auth.
 
+Also sets a short-lived, HTTP-only `roomscape_login` cookie. The browser must present that cookie when completing the same `loginId`, so a copied `loginId` alone cannot finish sign-in from a different browser.
+
 Browser-flow response:
 
 ```json
@@ -117,6 +119,10 @@ The server uses the stored active config when `config` is omitted and captures `
 ### `GET /api/rooms/:id`
 
 Loads a saved room owned by the current user. The server writes the saved scene into the user's active generated-room workspace, validates it, promotes it, and returns the saved room.
+
+### `DELETE /api/rooms/:id`
+
+Deletes a saved room owned by the current user. The current active room is unchanged.
 
 ### `GET /api/active-room`
 

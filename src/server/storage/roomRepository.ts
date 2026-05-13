@@ -47,6 +47,16 @@ export class RoomRepository {
     const room = data.rooms.find((candidate) => candidate.id === roomId && candidate.userId === userId);
     return room ? toSavedRoom(room) : null;
   }
+
+  /** Deletes a saved room only when it belongs to the current user. */
+  public async delete(userId: string, roomId: string): Promise<boolean> {
+    const data = await this.store.read();
+    const existingCount = data.rooms.length;
+    data.rooms = data.rooms.filter((candidate) => candidate.id !== roomId || candidate.userId !== userId);
+    if (data.rooms.length === existingCount) return false;
+    await this.store.write(data);
+    return true;
+  }
 }
 
 function toSavedRoom(room: RoomRecord): SavedRoom {

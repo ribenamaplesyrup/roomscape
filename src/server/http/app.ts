@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
@@ -12,7 +12,7 @@ import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/a
 import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
-import { readCookie, setRememberedDeviceCookie, setSessionCookie, clearSessionCookie, clearRememberedDeviceCookie } from "./cookies";
+import { readCookie, setRememberedDeviceCookie, setSessionCookie, clearSessionCookie, clearRememberedDeviceCookie, setPendingLoginCookie, clearPendingLoginCookie } from "./cookies";
 import { readJson, sendJson } from "./json";
 
 interface AppDeps {
@@ -34,12 +34,20 @@ interface UserRunState {
   runIds: Set<string>;
 }
 
+interface PendingBrowserLogin {
+  tokenHash: string;
+  expiresAt: number;
+}
+
+const pendingLoginMaxAgeMs = 10 * 60 * 1000;
+
 export function createApp({ store, runner, runnerFactory, bus, roomCode, workspaceRoot, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
   const activeRooms = new ActiveRoomRepository(store);
   const runStates = new Map<string, UserRunState>();
   const runOwners = new Map<string, string>();
+  const pendingBrowserLogins = new Map<string, PendingBrowserLogin>();
 
   /** Handles API routes first, then delegates static and HMR traffic to Vite in development. */
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -86,6 +94,7 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
       await auth.logout(sessionId, rememberToken);
       clearSessionCookie(res, { secure: isSecureRequest(req) });
       clearRememberedDeviceCookie(res, { secure: isSecureRequest(req) });
+      clearPendingLoginCookie(res, { secure: isSecureRequest(req) });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -100,18 +109,29 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/start") {
       const bridge = requireCodexBridge(codex);
       const login = await mapCodexErrors(() => bridge.startChatGptLogin());
+      cleanupExpiredPendingLogins();
+      const pendingToken = randomBytes(32).toString("base64url");
+      pendingBrowserLogins.set(login.loginId, {
+        tokenHash: hashPendingLoginToken(pendingToken),
+        expiresAt: Date.now() + pendingLoginMaxAgeMs,
+      });
+      setPendingLoginCookie(res, pendingToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, login);
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/complete") {
       const bridge = requireCodexBridge(codex);
       const body = await readJson<{ loginId: string }>(req);
-      if (!body.loginId?.trim()) throw new HttpError(400, "ChatGPT login id is required.");
-      const account = await mapCodexErrors(() => bridge.completeChatGptLogin(body.loginId));
+      const loginId = body.loginId?.trim();
+      if (!loginId) throw new HttpError(400, "ChatGPT login id is required.");
+      assertPendingBrowserLogin(req, res, loginId);
+      const account = await mapCodexErrors(() => bridge.completeChatGptLogin(loginId));
       if (!account) {
         sendJson(res, 202, { status: "pending" });
         return;
       }
+      pendingBrowserLogins.delete(loginId);
+      clearPendingLoginCookie(res, { secure: isSecureRequest(req) });
       const result = await auth.authenticateWithChatGpt(account);
       await resetActiveRoomForUser(result.user.id, "Signed in; starting a fresh room.");
       setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
@@ -163,6 +183,12 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
       return;
     }
     const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
+    if (req.method === "DELETE" && roomMatch?.[1]) {
+      const deleted = await rooms.delete(user.id, roomMatch[1]);
+      if (!deleted) throw new HttpError(404, "Room not found.");
+      sendJson(res, 200, { ok: true });
+      return;
+    }
     if (req.method === "GET" && roomMatch?.[1]) {
       const room = await rooms.get(user.id, roomMatch[1]);
       if (!room) throw new HttpError(404, "Room not found.");
@@ -326,6 +352,29 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
     await activeRooms.saveSceneSource(userId, await code.readRawActiveScene());
   }
 
+  function assertPendingBrowserLogin(req: IncomingMessage, res: ServerResponse, loginId: string): void {
+    const pending = pendingBrowserLogins.get(loginId);
+    const token = readCookie(req, "roomscape_login");
+    if (!pending || !token) {
+      throw new HttpError(401, "ChatGPT sign-in was not started in this browser.");
+    }
+    if (pending.expiresAt <= Date.now()) {
+      pendingBrowserLogins.delete(loginId);
+      clearPendingLoginCookie(res, { secure: isSecureRequest(req) });
+      throw new HttpError(401, "ChatGPT sign-in expired. Start sign-in again.");
+    }
+    if (pending.tokenHash !== hashPendingLoginToken(token)) {
+      throw new HttpError(401, "ChatGPT sign-in was started in a different browser.");
+    }
+  }
+
+  function cleanupExpiredPendingLogins(): void {
+    const now = Date.now();
+    for (const [loginId, pending] of pendingBrowserLogins) {
+      if (pending.expiresAt <= now) pendingBrowserLogins.delete(loginId);
+    }
+  }
+
   async function resetActiveRoomForUser(userId: string, reason: string): Promise<RoomConfig> {
     cancelUserRuns(userId, reason);
     const activeConfig = await activeRooms.saveConfig(userId, freshRoomConfig());
@@ -357,6 +406,10 @@ function requireRoomCode(roomCode: RoomCodeRepository | undefined): RoomCodeRepo
     throw new HttpError(503, "Room code repository is not available.");
   }
   return roomCode;
+}
+
+function hashPendingLoginToken(value: string): string {
+  return createHash("sha256").update(`pending-login:${value}`).digest("hex");
 }
 
 function isSecureRequest(req: IncomingMessage): boolean {

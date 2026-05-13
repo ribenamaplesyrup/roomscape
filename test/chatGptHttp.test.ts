@@ -191,13 +191,15 @@ describe("ChatGPT auth HTTP flow", () => {
 
     const started = await request<{ type: string; loginId: string; authUrl: string }>(handler, "POST", "/api/auth/chatgpt/start");
     expect(started.body).toEqual({ type: "chatgpt", loginId: "login-1", authUrl: "https://chatgpt.com/auth" });
+    const loginCookie = started.headers["set-cookie"];
+    expect(loginCookie).toContain("roomscape_login=");
 
-    const pending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const pending = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" }, loginCookie);
     expect(pending.body.status).toBe("pending");
 
     codex.completedLoginIds.add("login-1");
     codex.account = { accountId: "acct-chatgpt", email: "designer@example.com", planType: "plus" };
-    const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" }, loginCookie);
     expect(completed.body.status).toBe("authenticated");
     expect(completed.body.user.authMode).toBe("chatgpt");
     expect(completed.body.user).not.toHaveProperty("isArchitectConfigured");
@@ -268,6 +270,33 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(rooms.body.rooms.map((room) => ({ id: room.id, name: room.name }))).toEqual([{ id: first.body.room.id, name: "saved   SCENE" }]);
   });
 
+  it("deletes saved rooms without allowing another user to delete them", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-delete-room-"));
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+
+    codex.account = { accountId: "acct-a", email: "a@example.com" };
+    const userA = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const userACookie = userA.headers["set-cookie"]!;
+    const saved = await request<{ room: { id: string } }>(handler, "POST", "/api/rooms", { name: "Delete me" }, userACookie);
+
+    codex.account = { accountId: "acct-b", email: "b@example.com" };
+    const userB = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const blocked = await request<{ error: string }>(handler, "DELETE", `/api/rooms/${saved.body.room.id}`, undefined, userB.headers["set-cookie"]);
+    expect(blocked.status).toBe(404);
+
+    const deleted = await request<{ ok: boolean }>(handler, "DELETE", `/api/rooms/${saved.body.room.id}`, undefined, userACookie);
+    expect(deleted.body.ok).toBe(true);
+    const rooms = await request<{ rooms: Array<{ id: string }> }>(handler, "GET", "/api/rooms", undefined, userACookie);
+    expect(rooms.body.rooms).toEqual([]);
+  });
+
   it("forgets the remembered ChatGPT device on sign-out so fresh login can replace stale Codex tokens", async () => {
     const codex = new FakeCodexBridge();
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-remembered-"));
@@ -281,7 +310,7 @@ describe("ChatGPT auth HTTP flow", () => {
 
     codex.completedLoginIds.add("login-1");
     codex.account = { accountId: "acct-chatgpt", codexAuthRef: "auth-a", email: "designer@example.com" };
-    const completed = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const completed = await completeStartedChatGptLogin<{ status: string }>(handler);
     const cookies = completed.headers["set-cookie"];
     await request<{ ok: boolean }>(handler, "POST", "/api/auth/logout", undefined, cookies);
 
@@ -309,6 +338,26 @@ describe("ChatGPT auth HTTP flow", () => {
 
     const started = await request<ChatGptLoginStart>(handler, "POST", "/api/auth/chatgpt/start");
     expect(started.body).toEqual(codex.loginStart);
+    expect(started.headers["set-cookie"]).toContain("roomscape_login=");
+  });
+
+  it("requires the browser that started ChatGPT sign-in to complete it", async () => {
+    const codex = new FakeCodexBridge();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(await mkdtemp(path.join(os.tmpdir(), "roomscape-http-bound-login-"))),
+      codex,
+    });
+
+    await request<ChatGptLoginStart>(handler, "POST", "/api/auth/chatgpt/start");
+    codex.completedLoginIds.add("login-1");
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com" };
+    const completed = await request<{ error: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+
+    expect(completed.status).toBe(401);
+    expect(completed.body.error).toContain("not started in this browser");
   });
 
   it("passes the authenticated user's Codex home into agent runs", async () => {
@@ -324,7 +373,7 @@ describe("ChatGPT auth HTTP flow", () => {
 
     codex.account = { accountId: "acct-chatgpt", codexAuthRef: "auth-a", email: "designer@example.com" };
     codex.completedLoginIds.add("login-1");
-    const completed = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const completed = await completeStartedChatGptLogin<{ status: string }>(handler);
     await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, completed.headers["set-cookie"]);
 
     const input = await runner.waitForRun();
@@ -345,7 +394,7 @@ describe("ChatGPT auth HTTP flow", () => {
 
     codex.account = { accountId: "acct-chatgpt", codexAuthRef: "auth-a", email: "designer@example.com" };
     codex.completedLoginIds.add("login-1");
-    const completed = await request<{ status: string; user: { id: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const completed = await completeStartedChatGptLogin<{ status: string; user: { id: string } }>(handler);
     await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, completed.headers["set-cookie"]);
     await runner.waitForRunCount(1);
 
@@ -397,7 +446,7 @@ describe("ChatGPT auth HTTP flow", () => {
       roomCode: new RoomCodeRepository(roomRoot),
       codex,
     });
-    const completed = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    const completed = await completeStartedChatGptLogin<{ status: string; user: { authMode: string } }>(handler);
     const sessionCookie = completed.headers["set-cookie"];
 
     await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, sessionCookie);
@@ -610,6 +659,11 @@ async function waitForScene(handler: AppHandler, cookie: string, expected: strin
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   return request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, cookie);
+}
+
+async function completeStartedChatGptLogin<T>(handler: AppHandler): Promise<TestResponse<T>> {
+  const started = await request<ChatGptLoginStart>(handler, "POST", "/api/auth/chatgpt/start");
+  return request<T>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: started.body.loginId }, started.headers["set-cookie"]);
 }
 
 async function waitForUser(store: DataStore, userId: string, predicate: (user: UserRecord) => boolean): Promise<UserRecord> {

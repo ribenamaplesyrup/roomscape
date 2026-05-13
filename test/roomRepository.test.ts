@@ -36,4 +36,15 @@ describe("room repository", () => {
     expect(await repo.listForUser("user-a")).toHaveLength(1);
     expect(await repo.listForUser("user-b")).toHaveLength(1);
   });
+
+  it("deletes only the current user's saved room", async () => {
+    const repo = new RoomRepository(new MemoryStore());
+    const room = await repo.save("user-a", "Private room", emptyRoomConfig, "export const roomTitle = 'A';");
+
+    await expect(repo.delete("user-b", room.id)).resolves.toBe(false);
+    expect(await repo.get("user-a", room.id)).toMatchObject({ name: "Private room" });
+
+    await expect(repo.delete("user-a", room.id)).resolves.toBe(true);
+    expect(await repo.get("user-a", room.id)).toBeNull();
+  });
 });

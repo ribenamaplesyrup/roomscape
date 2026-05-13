@@ -18,6 +18,7 @@ interface ClientState {
   promptRuns: number;
   chatGptUsage: string | null;
   rooms: SavedRoom[];
+  selectedRoomId: string | null;
   activeRunIds: string[];
   isWorking: boolean;
 }
@@ -30,6 +31,7 @@ const state: ClientState = {
   promptRuns: initialStoredSession.promptRuns,
   chatGptUsage: null,
   rooms: [],
+  selectedRoomId: null,
   activeRunIds: initialStoredSession.activeRunIds,
   isWorking: initialStoredSession.isWorking,
 };
@@ -80,7 +82,7 @@ function renderLanding() {
         <h1 id="landing-heading">Roomscape</h1>
         <p class="tagline">Exploring the world while building it.</p>
         <button id="chatgpt-login" type="button">Sign in with ChatGPT</button>
-        <p id="auth-error" class="form-error" hidden></p>
+        <div id="auth-status" class="auth-status" hidden></div>
       </section>
     </main>
   `;
@@ -89,11 +91,9 @@ function renderLanding() {
 
 async function startChatGptAuth() {
   const button = document.querySelector<HTMLButtonElement>("#chatgpt-login")!;
-  const errorTarget = document.querySelector<HTMLElement>("#auth-error")!;
   button.disabled = true;
   button.textContent = "Checking ChatGPT...";
-  errorTarget.textContent = "";
-  errorTarget.hidden = true;
+  hideAuthStatus();
   const remembered = await authenticateExistingChatGptSession();
   if (remembered) return;
 
@@ -101,8 +101,7 @@ async function startChatGptAuth() {
   if (!chatGptAuthWindow) {
     button.disabled = false;
     button.textContent = "Sign in with ChatGPT";
-    errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
-    errorTarget.hidden = false;
+    showAuthText("Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.", "error");
     return;
   }
   clearPolling();
@@ -110,8 +109,7 @@ async function startChatGptAuth() {
     const login = await api<ChatGptLoginStart>("/api/auth/chatgpt/start", { method: "POST" });
     if (login.type === "chatgptDeviceCode") {
       chatGptAuthWindow.location.href = login.verificationUrl;
-      errorTarget.textContent = `Enter code ${login.userCode} on the OpenAI page. If ChatGPT asks, enable Codex device code authorization in ChatGPT Security Settings, then retry sign-in.`;
-      errorTarget.hidden = false;
+      showDeviceCode(login.userCode, login.verificationUrl);
       button.textContent = "Waiting for ChatGPT...";
     } else {
       chatGptAuthWindow.location.href = login.authUrl;
@@ -123,8 +121,7 @@ async function startChatGptAuth() {
     chatGptAuthWindow = null;
     button.disabled = false;
     button.textContent = "Sign in with ChatGPT";
-    errorTarget.textContent = error instanceof Error ? error.message : "Unable to start ChatGPT login.";
-    errorTarget.hidden = false;
+    showAuthText(error instanceof Error ? error.message : "Unable to start ChatGPT login.", "error");
   }
 }
 
@@ -136,8 +133,7 @@ async function authenticateExistingChatGptSession(): Promise<boolean> {
     chatGptAuthWindow?.close();
     chatGptAuthWindow = null;
     state.user = result.user;
-    const errorTarget = document.querySelector<HTMLElement>("#auth-error");
-    if (errorTarget) errorTarget.hidden = true;
+    hideAuthStatus();
     await loadRooms();
     renderWorkspace();
     return true;
@@ -163,16 +159,59 @@ async function completeChatGptAuth(loginId: string, quiet = false) {
     renderWorkspace();
   } catch (error) {
     clearPolling();
-    const errorTarget = document.querySelector<HTMLElement>("#auth-error");
-    if (errorTarget) {
-      errorTarget.textContent = error instanceof Error ? error.message : "Unable to complete ChatGPT login.";
-      errorTarget.hidden = false;
-    }
+    showAuthText(error instanceof Error ? error.message : "Unable to complete ChatGPT login.", "error");
     const button = document.querySelector<HTMLButtonElement>("#chatgpt-login");
     if (button) {
       button.disabled = false;
       button.textContent = "Sign in with ChatGPT";
     }
+  }
+}
+
+function showDeviceCode(userCode: string, verificationUrl: string) {
+  const target = document.querySelector<HTMLElement>("#auth-status");
+  if (!target) return;
+  const verificationHost = verificationUrlHost(verificationUrl);
+  target.className = "auth-status auth-status-device";
+  target.innerHTML = `
+    <span class="auth-kicker">Temporary OpenAI code</span>
+    <span class="auth-code">${escapeHtml(userCode)}</span>
+    <span class="auth-help">Enter it only on ${escapeHtml(verificationHost)}. It is not your password, but do not share it while sign-in is pending.</span>
+    <button id="copy-auth-code" class="quiet-button auth-copy" type="button">Copy code</button>
+    <span class="auth-help">If ChatGPT asks, enable Codex device code authorization in ChatGPT Security Settings, then retry sign-in.</span>
+  `;
+  target.hidden = false;
+  document.querySelector<HTMLButtonElement>("#copy-auth-code")?.addEventListener("click", async (event) => {
+    const copyButton = event.currentTarget as HTMLButtonElement;
+    try {
+      await navigator.clipboard.writeText(userCode);
+      copyButton.textContent = "Copied";
+    } catch {
+      copyButton.textContent = "Copy failed";
+    }
+  });
+}
+
+function showAuthText(message: string, tone: "error" | "info") {
+  const target = document.querySelector<HTMLElement>("#auth-status");
+  if (!target) return;
+  target.className = `auth-status auth-status-${tone}`;
+  target.textContent = message;
+  target.hidden = false;
+}
+
+function hideAuthStatus() {
+  const target = document.querySelector<HTMLElement>("#auth-status");
+  if (!target) return;
+  target.textContent = "";
+  target.hidden = true;
+}
+
+function verificationUrlHost(verificationUrl: string): string {
+  try {
+    return new URL(verificationUrl).host;
+  } catch {
+    return "the OpenAI page";
   }
 }
 
@@ -206,9 +245,14 @@ function renderWorkspace() {
           <button id="save-room" type="button">Save</button>
           <button id="reset-room" class="quiet-button" type="button">Reset</button>
         </div>
-        <select id="room-loader" aria-label="Load saved room">
-          ${renderRoomOptions()}
-        </select>
+        <div class="room-loader-row">
+          <select id="room-loader" aria-label="Load saved room">
+            ${renderRoomOptions()}
+          </select>
+          <button id="delete-room" class="quiet-button icon-button danger-button" type="button" aria-label="Delete selected saved room" title="Delete selected saved room" ${state.selectedRoomId ? "" : "disabled"}>
+            ${trashIcon()}
+          </button>
+        </div>
         <div class="telemetry">
           <div class="usage-row">
             <span>Session usage</span>
@@ -238,6 +282,7 @@ function wireWorkspaceEvents() {
   document.querySelector<HTMLButtonElement>("#save-room")!.addEventListener("click", saveRoom);
   document.querySelector<HTMLButtonElement>("#reset-room")!.addEventListener("click", resetRoom);
   document.querySelector<HTMLSelectElement>("#room-loader")!.addEventListener("change", loadRoomSelection);
+  document.querySelector<HTMLButtonElement>("#delete-room")!.addEventListener("click", deleteSelectedRoom);
   document.querySelector<HTMLButtonElement>("#logout")!.addEventListener("click", logout);
 }
 
@@ -475,7 +520,8 @@ function rememberAgentEvent(event: AgentEvent, runId?: string): boolean {
 
 async function saveRoom() {
   const name = document.querySelector<HTMLInputElement>("#room-name")!.value;
-  await api("/api/rooms", { method: "POST", body: { name } });
+  const result = await api<{ room: SavedRoom }>("/api/rooms", { method: "POST", body: { name } });
+  state.selectedRoomId = result.room.id;
   await loadRooms();
   updateRoomLoader();
 }
@@ -487,6 +533,7 @@ async function resetRoom() {
   state.promptRuns = 0;
   state.activeRunIds = [];
   state.isWorking = false;
+  state.selectedRoomId = null;
   clearActiveRunStatus();
   seenAgentEventKeys.clear();
   closeActiveSources();
@@ -500,22 +547,28 @@ async function resetRoom() {
 async function loadRooms() {
   const result = await api<{ rooms: SavedRoom[] }>("/api/rooms");
   state.rooms = result.rooms;
+  if (state.selectedRoomId && !state.rooms.some((room) => room.id === state.selectedRoomId)) {
+    state.selectedRoomId = null;
+  }
 }
 
 function updateRoomLoader() {
   const loader = document.querySelector<HTMLSelectElement>("#room-loader");
   if (loader) loader.innerHTML = renderRoomOptions();
+  updateDeleteRoomButton();
 }
 
 function renderRoomOptions(): string {
   return [
-    '<option value="">Load saved room</option>',
-    ...state.rooms.map((room) => `<option value="${room.id}">${escapeHtml(room.name)}</option>`),
+    `<option value="" ${state.selectedRoomId ? "" : "selected"}>Load saved room</option>`,
+    ...state.rooms.map((room) => `<option value="${escapeHtml(room.id)}" ${room.id === state.selectedRoomId ? "selected" : ""}>${escapeHtml(room.name)}</option>`),
   ].join("");
 }
 
 async function loadRoomSelection(event: Event) {
   const id = (event.currentTarget as HTMLSelectElement).value;
+  state.selectedRoomId = id || null;
+  updateDeleteRoomButton();
   if (!id) return;
   const result = await api<{ room: SavedRoom }>(`/api/rooms/${id}`);
   state.config = { ...result.room.config, name: result.room.name };
@@ -523,6 +576,29 @@ async function loadRoomSelection(event: Event) {
   renderWorkspace();
   await applyLatestActiveScene();
   renderer?.resetPose();
+}
+
+async function deleteSelectedRoom() {
+  const roomId = state.selectedRoomId;
+  const room = roomId ? state.rooms.find((candidate) => candidate.id === roomId) : undefined;
+  if (!room) return;
+  if (!window.confirm(`Delete saved room "${room.name}"? The current room will stay open.`)) return;
+  await api(`/api/rooms/${encodeURIComponent(room.id)}`, { method: "DELETE" });
+  state.selectedRoomId = null;
+  await loadRooms();
+  updateRoomLoader();
+  pushLog(`Deleted saved room: ${room.name}.`);
+  updateTelemetry();
+}
+
+function updateDeleteRoomButton() {
+  const button = document.querySelector<HTMLButtonElement>("#delete-room");
+  if (!button) return;
+  button.disabled = !state.selectedRoomId;
+}
+
+function trashIcon(): string {
+  return `<svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z"/></svg>`;
 }
 
 function updateTelemetry() {
