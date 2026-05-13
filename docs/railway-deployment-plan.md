@@ -30,9 +30,9 @@ Use the current Docker/Railway config with volume-backed JSON storage.
 
 Testable outcomes:
 
-- Complete: Railway project `roomscape` was created in `Sean Greaves's Projects`.
+- Complete: Railway project `roomscape` was created in a private Railway workspace.
 - Complete: service `roomscape` was deployed from `codex/railway-deployment-work`.
-- Complete: `/api/health` returns `200` at `https://roomscape-production.up.railway.app/api/health`.
+- Complete: `/api/health` returns `200` at the Railway public URL.
 - Complete: landing page loads over the Railway public URL.
 - Complete: `ROOMSCAPE_DATA_DIR=/data` points to attached volume `roomscape-volume`.
 

@@ -7,9 +7,9 @@ Roomscape can run on Railway as a single Node web service, but the current app i
 - Project: `roomscape`
 - Service: `roomscape`
 - Environment: `production`
-- Public URL: `https://roomscape-production.up.railway.app`
-- Deployment ID: `1dcb5e6c-6e73-4967-ab5b-6f24b7de1628`
-- Status: deployed successfully on May 12, 2026.
+- Public URL: configure in Railway for your deployment.
+- Deployment ID: tracked in Railway.
+- Status: deploy from the checked-in Railway configuration.
 
 Smoke checks:
 
