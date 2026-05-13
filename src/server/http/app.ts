@@ -8,9 +8,10 @@ import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
 import { RoomCodeRepository } from "../agent/roomCodeRepository";
 import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/appServerClient";
+import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
-import { readCookie, setSessionCookie, clearSessionCookie } from "./cookies";
+import { readCookie, setRememberedDeviceCookie, setSessionCookie, clearSessionCookie } from "./cookies";
 import { readJson, sendJson } from "./json";
 
 interface AppDeps {
@@ -23,14 +24,19 @@ interface AppDeps {
   staticRoot?: string;
 }
 
+interface UserRunState {
+  generation: number;
+  queue: Promise<void>;
+  controllers: Set<AbortController>;
+  runIds: Set<string>;
+}
+
 export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
-  let activeConfig: RoomConfig = freshRoomConfig();
-  let runQueue: Promise<void> = Promise.resolve();
-  let runGeneration = 0;
-  const activeRunControllers = new Set<AbortController>();
-  const knownRunIds = new Set<string>();
+  const activeRooms = new ActiveRoomRepository(store);
+  const runStates = new Map<string, UserRunState>();
+  const runOwners = new Map<string, string>();
 
   /** Handles API routes first, then delegates static and HMR traffic to Vite in development. */
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -70,9 +76,11 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
-      cancelAllRuns("Signed out; cleared active room edits.");
-      await auth.logout(readCookie(req, "roomscape_session"));
-      clearSessionCookie(res);
+      const sessionId = readCookie(req, "roomscape_session");
+      const user = await auth.userForSession(sessionId);
+      if (user) cancelUserRuns(user.id, "Signed out; cleared active room edits.");
+      await auth.logout(sessionId);
+      clearSessionCookie(res, { secure: isSecureRequest(req) });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -87,7 +95,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/start") {
       const bridge = requireCodexBridge(codex);
       const login = await mapCodexErrors(() => bridge.startChatGptLogin());
-      sendJson(res, 200, { loginId: login.loginId, authUrl: login.authUrl });
+      sendJson(res, 200, login);
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/complete") {
@@ -100,11 +108,18 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         return;
       }
       const result = await auth.authenticateWithChatGpt(account);
-      setSessionCookie(res, result.sessionId);
+      setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
+      setRememberedDeviceCookie(res, result.rememberToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/existing") {
+      const remembered = await auth.authenticateWithRememberedDevice(readCookie(req, "roomscape_device"));
+      if (remembered) {
+        setSessionCookie(res, remembered.sessionId, { secure: isSecureRequest(req) });
+        sendJson(res, 200, { status: "authenticated", user: remembered.user });
+        return;
+      }
       const bridge = requireCodexBridge(codex);
       const account = await mapCodexErrors(() => bridge.readChatGptAccount());
       if (!account) {
@@ -112,7 +127,8 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         return;
       }
       const result = await auth.authenticateWithChatGpt(account);
-      setSessionCookie(res, result.sessionId);
+      setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
+      setRememberedDeviceCookie(res, result.rememberToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
       return;
     }
@@ -123,7 +139,8 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         sendJson(res, 200, { usage: null });
         return;
       }
-      sendJson(res, 200, { usage: await mapCodexErrors(() => codex.readRateLimits()) });
+      const record = await userRecord(user.id);
+      sendJson(res, 200, { usage: await mapCodexErrors(() => codex.readRateLimits(record?.codexAuthRef)) });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/rooms") {
@@ -134,6 +151,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const body = await readJson<{ name: string; config?: RoomConfig }>(req);
       const code = requireRoomCode(roomCode);
       const sceneSource = await code.readRawActiveScene();
+      const activeConfig = await activeRooms.getConfig(user.id);
       sendJson(res, 201, { room: await rooms.save(user.id, body.name, body.config ?? activeConfig, sceneSource) });
       return;
     }
@@ -141,7 +159,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     if (req.method === "GET" && roomMatch?.[1]) {
       const room = await rooms.get(user.id, roomMatch[1]);
       if (!room) throw new HttpError(404, "Room not found.");
-      activeConfig = { ...room.config, name: room.name };
+      const activeConfig = await activeRooms.saveConfig(user.id, { ...room.config, name: room.name });
       const code = requireRoomCode(roomCode);
       await code.writeConfig(activeConfig);
       const normalizedSceneSource = code.normalizeSceneSource(room.sceneSource);
@@ -155,12 +173,17 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/active-room") {
-      sendJson(res, 200, { config: activeConfig });
+      sendJson(res, 200, { config: await activeRooms.getConfig(user.id) });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/active-room/scene-module") {
+      const code = requireRoomCode(roomCode);
+      sendJson(res, 200, { source: await code.readActiveSceneJavaScript() });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
-      cancelAllRuns("Room reset; cleared active room edits.");
-      activeConfig = freshRoomConfig();
+      cancelUserRuns(user.id, "Room reset; cleared active room edits.");
+      const activeConfig = await activeRooms.saveConfig(user.id, freshRoomConfig());
       const code = requireRoomCode(roomCode);
       await code.writeConfig(activeConfig);
       await code.writeFreshScene();
@@ -169,17 +192,22 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     }
     if (req.method === "POST" && url.pathname === "/api/agent/runs") {
       const body = await readJson<{ prompt: string; model: string; currentConfig?: RoomConfig }>(req);
+      const runState = userRunState(user.id);
       const runId = randomUUID();
-      const runVersion = runGeneration;
+      const runVersion = runState.generation;
       const controller = new AbortController();
+      const activeConfig = await activeRooms.getConfig(user.id);
       const currentConfig = body.currentConfig ?? activeConfig;
-      activeRunControllers.add(controller);
-      knownRunIds.add(runId);
+      runState.controllers.add(controller);
+      runState.runIds.add(runId);
+      runOwners.set(runId, user.id);
+      const record = await userRecord(user.id);
+      const codexHome = record?.codexAuthRef && codex?.codexHomeForAuthRef ? codex.codexHomeForAuthRef(record.codexAuthRef) : undefined;
       bus.publish(runId, { type: "log", message: "Queued room edit.", at: new Date().toISOString() });
-      runQueue = runQueue
+      runState.queue = runState.queue
         .catch(() => undefined)
         .then(async () => {
-          if (runVersion !== runGeneration || controller.signal.aborted) return;
+          if (runVersion !== runState.generation || controller.signal.aborted) return;
           bus.publish(runId, { type: "log", message: "Starting queued room edit.", at: new Date().toISOString() });
           await runner.run(
             {
@@ -187,29 +215,32 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
               prompt: body.prompt,
               model: body.model,
               currentConfig,
+              ...(codexHome ? { codexHome } : {}),
               signal: controller.signal,
             },
             (event) => {
-              if (runVersion !== runGeneration || controller.signal.aborted) return;
-              if (event.type === "room-updated") activeConfig = event.config;
+              if (runVersion !== runState.generation || controller.signal.aborted) return;
+              if (event.type === "room-updated") void activeRooms.saveConfig(user.id, event.config);
               bus.publish(runId, event);
             },
           );
         })
         .finally(() => {
-          activeRunControllers.delete(controller);
-          knownRunIds.delete(runId);
+          runState.controllers.delete(controller);
+          runState.runIds.delete(runId);
+          runOwners.delete(runId);
         });
       sendJson(res, 202, { runId });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/agent/runs/cancel") {
-      cancelAllRuns("Room edit cancelled.");
+      cancelUserRuns(user.id, "Room edit cancelled.");
       sendJson(res, 200, { ok: true });
       return;
     }
     const eventMatch = url.pathname.match(/^\/api\/agent\/runs\/([^/]+)\/events$/);
     if (req.method === "GET" && eventMatch?.[1]) {
+      if (runOwners.get(eventMatch[1]) !== user.id) throw new HttpError(404, "Run not found.");
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -226,16 +257,35 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     throw new HttpError(404, `No route for ${req.method} ${url.pathname}`);
   }
 
-  function cancelAllRuns(reason: string): void {
-    runGeneration += 1;
-    for (const controller of activeRunControllers) controller.abort();
-    activeRunControllers.clear();
-    for (const runId of knownRunIds) {
+  function userRunState(userId: string): UserRunState {
+    const existing = runStates.get(userId);
+    if (existing) return existing;
+    const created: UserRunState = {
+      generation: 0,
+      queue: Promise.resolve(),
+      controllers: new Set<AbortController>(),
+      runIds: new Set<string>(),
+    };
+    runStates.set(userId, created);
+    return created;
+  }
+
+  function cancelUserRuns(userId: string, reason: string): void {
+    const runState = userRunState(userId);
+    runState.generation += 1;
+    for (const controller of runState.controllers) controller.abort();
+    runState.controllers.clear();
+    for (const runId of runState.runIds) {
       bus.publish(runId, { type: "error", message: reason, at: new Date().toISOString() });
+      runOwners.delete(runId);
     }
-    knownRunIds.clear();
-    bus.clear();
-    runQueue = Promise.resolve();
+    runState.runIds.clear();
+    runState.queue = Promise.resolve();
+  }
+
+  async function userRecord(userId: string) {
+    const data = await store.read();
+    return data.users.find((candidate) => candidate.id === userId) ?? null;
   }
 }
 
@@ -251,6 +301,14 @@ function requireRoomCode(roomCode: RoomCodeRepository | undefined): RoomCodeRepo
     throw new HttpError(503, "Room code repository is not available.");
   }
   return roomCode;
+}
+
+function isSecureRequest(req: IncomingMessage): boolean {
+  return firstHeaderValue(req.headers["x-forwarded-proto"]) === "https";
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 async function mapCodexErrors<T>(work: () => Promise<T>): Promise<T> {

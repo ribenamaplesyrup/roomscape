@@ -1,5 +1,5 @@
 import "./styles/app.css";
-import type { AgentEvent, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
+import type { ActiveSceneModuleSource, AgentEvent, ChatGptAuthStatus, ChatGptLoginStart, ChatGptUsage, PublicUser, SavedRoom } from "../shared/api";
 import { modelOptions } from "../shared/models";
 import type { RoomConfig } from "../shared/room";
 import { roomConfig } from "../../sandbox/rooms/active/roomConfig";
@@ -92,29 +92,33 @@ function renderLanding() {
 async function startChatGptAuth() {
   const button = document.querySelector<HTMLButtonElement>("#chatgpt-login")!;
   const errorTarget = document.querySelector<HTMLElement>("#auth-error")!;
+  button.disabled = true;
+  button.textContent = "Checking ChatGPT...";
+  errorTarget.textContent = "";
+  errorTarget.hidden = true;
+  const remembered = await authenticateExistingChatGptSession();
+  if (remembered) return;
+
   chatGptAuthWindow = window.open("about:blank", "roomscape-chatgpt-login", "popup,width=520,height=720");
   if (!chatGptAuthWindow) {
-    button.disabled = true;
-    button.textContent = "Checking ChatGPT...";
-    errorTarget.textContent = "";
-    errorTarget.hidden = true;
-    const authenticated = await authenticateExistingChatGptSession();
-    if (!authenticated) {
-      button.disabled = false;
-      button.textContent = "Sign in with ChatGPT";
-      errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
-      errorTarget.hidden = false;
-    }
+    button.disabled = false;
+    button.textContent = "Sign in with ChatGPT";
+    errorTarget.textContent = "Unable to open ChatGPT sign-in. Allow pop-ups for Roomscape and try again.";
+    errorTarget.hidden = false;
     return;
   }
   clearPolling();
-  button.disabled = true;
-  errorTarget.textContent = "";
-  errorTarget.hidden = true;
   try {
     const login = await api<ChatGptLoginStart>("/api/auth/chatgpt/start", { method: "POST" });
-    chatGptAuthWindow.location.href = login.authUrl;
-    button.textContent = "Waiting for ChatGPT...";
+    if (login.type === "chatgptDeviceCode") {
+      chatGptAuthWindow.location.href = login.verificationUrl;
+      errorTarget.textContent = `Enter code ${login.userCode} on the OpenAI page. If ChatGPT asks, enable Codex device code authorization in ChatGPT Security Settings, then retry sign-in.`;
+      errorTarget.hidden = false;
+      button.textContent = "Waiting for ChatGPT...";
+    } else {
+      chatGptAuthWindow.location.href = login.authUrl;
+      button.textContent = "Waiting for ChatGPT...";
+    }
     chatGptPoll = window.setInterval(() => void completeChatGptAuth(login.loginId, true), 2_500);
   } catch (error) {
     chatGptAuthWindow?.close();
@@ -134,6 +138,8 @@ async function authenticateExistingChatGptSession(): Promise<boolean> {
     chatGptAuthWindow?.close();
     chatGptAuthWindow = null;
     state.user = result.user;
+    const errorTarget = document.querySelector<HTMLElement>("#auth-error");
+    if (errorTarget) errorTarget.hidden = true;
     await loadRooms();
     renderWorkspace();
     return true;
@@ -222,6 +228,7 @@ function renderWorkspace() {
   renderer = new RoomRenderer(document.querySelector("#room-canvas")!);
   applyActiveScene();
   renderer.start();
+  void applyLatestActiveScene();
   restoreStoredPose();
   startPosePersistence();
   startUsagePolling();
@@ -254,6 +261,11 @@ function applySceneModule(module: RoomSceneModule) {
 
 async function applyLatestActiveScene() {
   try {
+    const runtimeModule = await loadRuntimeActiveSceneModule();
+    if (runtimeModule) {
+      applySceneModule(runtimeModule);
+      return;
+    }
     const importActiveRoomScene = activeRoomSceneImporters["../../sandbox/rooms/active/activeRoomScene.ts"];
     if (!importActiveRoomScene) throw new Error("Active room scene importer is unavailable.");
     const module = await importActiveRoomScene();
@@ -262,6 +274,17 @@ async function applyLatestActiveScene() {
     pushLog(`ERROR: Unable to load active scene: ${error instanceof Error ? error.message : "Unknown scene load error."}`);
     applyActiveScene();
     updateTelemetry();
+  }
+}
+
+async function loadRuntimeActiveSceneModule(): Promise<RoomSceneModule | null> {
+  if (!state.user) return null;
+  const result = await api<ActiveSceneModuleSource>("/api/active-room/scene-module");
+  const url = URL.createObjectURL(new Blob([result.source], { type: "text/javascript" }));
+  try {
+    return await import(/* @vite-ignore */ url) as RoomSceneModule;
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -588,7 +611,7 @@ function accountLabel(): string {
   if (state.user.authMode === "chatgpt") {
     return state.user.planType ? `ChatGPT ${state.user.planType}` : "ChatGPT account";
   }
-  return state.user.openAiAccountLabel;
+  return state.user.accountLabel;
 }
 
 function sessionUsageLabel(): string {

@@ -6,6 +6,7 @@ export interface PublicUser {
   id: string;
   authMode: AuthMode;
   openAiAccountLabel: string;
+  accountLabel: string;
   planType?: string;
 }
 
@@ -40,9 +41,21 @@ export interface AgentRunStart {
   runId: string;
 }
 
-export interface ChatGptLoginStart {
+export type ChatGptLoginStart =
+  | ChatGptBrowserLoginStart
+  | ChatGptDeviceCodeLoginStart;
+
+export interface ChatGptBrowserLoginStart {
+  type: "chatgpt";
   loginId: string;
   authUrl: string;
+}
+
+export interface ChatGptDeviceCodeLoginStart {
+  type: "chatgptDeviceCode";
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
 }
 
 export interface ChatGptAuthStatus {
@@ -64,4 +77,8 @@ export interface ChatGptRateLimitBucket {
     resetsAt: number;
   };
   rateLimitReachedType?: string | null;
+}
+
+export interface ActiveSceneModuleSource {
+  source: string;
 }

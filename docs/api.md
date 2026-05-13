@@ -16,10 +16,16 @@ Returns the current public user or `null`.
 
 Starts Codex-managed ChatGPT auth.
 
-Response:
+Browser-flow response:
 
 ```json
-{ "loginId": "id", "authUrl": "https://..." }
+{ "type": "chatgpt", "loginId": "id", "authUrl": "https://..." }
+```
+
+Hosted device-code response:
+
+```json
+{ "type": "chatgptDeviceCode", "loginId": "id", "verificationUrl": "https://auth.openai.com/codex/device", "userCode": "ABCD-1234" }
 ```
 
 ### `POST /api/auth/chatgpt/complete`
@@ -39,7 +45,7 @@ Returns either:
 or:
 
 ```json
-{ "status": "authenticated", "user": { "id": "user-id", "authMode": "chatgpt", "openAiAccountLabel": "ChatGPT account" } }
+{ "status": "authenticated", "user": { "id": "user-id", "authMode": "chatgpt", "accountLabel": "ChatGPT account", "openAiAccountLabel": "ChatGPT account" } }
 ```
 
 ### `POST /api/auth/logout`
@@ -89,6 +95,14 @@ Loads a saved room owned by the current user. The server writes the saved scene 
 ### `GET /api/active-room`
 
 Returns the current in-memory active `RoomConfig`.
+
+### `GET /api/active-room/scene-module`
+
+Returns the current validated active scene module transpiled to browser-importable JavaScript.
+
+```json
+{ "source": "export const roomTitle = ..." }
+```
 
 ### `POST /api/active-room/reset`
 

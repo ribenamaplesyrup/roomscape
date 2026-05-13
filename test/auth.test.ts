@@ -35,4 +35,5 @@ describe("auth service", () => {
     expect(data.users[0]).not.toHaveProperty("passwordHash");
     expect(await service.userForSession(result.sessionId)).toEqual(result.user);
   });
+
 });

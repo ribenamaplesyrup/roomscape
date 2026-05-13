@@ -8,6 +8,7 @@ export interface ArchitectRunInput {
   prompt: string;
   model: string;
   currentConfig: RoomConfig;
+  codexHome?: string;
   signal?: AbortSignal;
 }
 

@@ -4,8 +4,11 @@ import type { AuthMode } from "../../shared/api";
 export interface UserRecord {
   id: string;
   authMode: AuthMode;
-  openAiAccountHash: string;
-  openAiAccountLabel: string;
+  openAiAccountHash?: string;
+  openAiAccountLabel?: string;
+  accountLabel?: string;
+  codexAuthRef?: string;
+  rememberTokenHash?: string;
   planType?: string;
   createdAt: string;
   updatedAt: string;
@@ -27,10 +30,17 @@ export interface RoomRecord {
   updatedAt: string;
 }
 
+export interface ActiveRoomRecord {
+  userId: string;
+  config: RoomConfig;
+  updatedAt: string;
+}
+
 export interface RoomscapeData {
   users: UserRecord[];
   sessions: SessionRecord[];
   rooms: RoomRecord[];
+  activeRooms: ActiveRoomRecord[];
 }
 
 export interface DataStore {
@@ -42,4 +52,5 @@ export const emptyData = (): RoomscapeData => ({
   users: [],
   sessions: [],
   rooms: [],
+  activeRooms: [],
 });

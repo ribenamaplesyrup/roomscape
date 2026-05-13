@@ -27,6 +27,7 @@ export interface CodexSdkArchitectRunnerOptions {
 /** Runs the Architect through the Codex SDK while keeping writes scoped to the active room sandbox. */
 export class CodexSdkArchitectRunner implements ArchitectRunner {
   private readonly codex: CodexThreadFactory;
+  private readonly usesInjectedCodex: boolean;
   private readonly maxRepairAttempts: number;
   private readonly maxRegenerationAttempts: number;
 
@@ -35,6 +36,7 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     options: CodexSdkArchitectRunnerOptions = {},
   ) {
     this.codex = options.codex ?? new Codex();
+    this.usesInjectedCodex = Boolean(options.codex);
     this.maxRepairAttempts = options.maxRepairAttempts ?? 2;
     this.maxRegenerationAttempts = options.maxRegenerationAttempts ?? 1;
   }
@@ -53,11 +55,12 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         emit(log(`Split broad room edit into ${phases.length} incremental phases: ${phases.map((phase) => phase.title).join(" -> ")}.`));
       }
 
-      const thread = this.codex.startThread({
+      const threadFactory = input.codexHome && !this.usesInjectedCodex ? new Codex({ env: codexEnvironment(input.codexHome) }) : this.codex;
+      const thread = threadFactory.startThread({
         model: input.model,
         workingDirectory: this.roomCode.sandboxRoot,
         skipGitRepoCheck: true,
-        sandboxMode: "workspace-write",
+        sandboxMode: codexSandboxMode(process.env),
         approvalPolicy: "never",
         networkAccessEnabled: false,
       });
@@ -124,6 +127,9 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
         }
         throwIfAborted(input.signal);
         const validationErrors = this.roomCode.validateSceneSource(normalizedSource);
+        if (normalizedSource === originalScene) {
+          validationErrors.push("Codex did not change roomScene.ts.");
+        }
         if (targetedValidationPrompt) {
           validationErrors.push(...validateTargetedEditScope(targetedValidationPrompt, originalScene, normalizedSource));
         }
@@ -139,7 +145,6 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
           return null;
         }
       }
-
       if (regenerationAttempt >= this.maxRegenerationAttempts) {
         await this.roomCode.writeSceneSource(lastGoodScene);
         emit({ type: "error", message: `Generated scene did not pass validation after retries:\n${latestValidationErrors.join("\n")}`, at: new Date().toISOString() });
@@ -206,6 +211,20 @@ export class CodexSdkArchitectRunner implements ArchitectRunner {
     }
     return false;
   }
+}
+
+function codexEnvironment(codexHome: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries({ ...process.env, CODEX_HOME: codexHome }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+export function codexSandboxMode(env: NodeJS.ProcessEnv): NonNullable<ThreadOptions["sandboxMode"]> {
+  const configured = env.ROOMSCAPE_CODEX_SANDBOX_MODE?.trim();
+  if (configured === "read-only" || configured === "workspace-write" || configured === "danger-full-access") {
+    return configured;
+  }
+  return env.RAILWAY_ENVIRONMENT || env.RAILWAY_SERVICE_ID ? "danger-full-access" : "workspace-write";
 }
 
 function buildArchitectPrompt(input: ArchitectRunInput, currentScene: string): string {
