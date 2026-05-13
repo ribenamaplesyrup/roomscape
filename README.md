@@ -21,6 +21,7 @@ Use these docs depending on what you are trying to do:
 - [AGENTS.md](AGENTS.md) for AI coding agents working in this repository.
 - [docs/development.md](docs/development.md) for commands, runtime details, Docker, data files, and troubleshooting.
 - [docs/architecture.md](docs/architecture.md) for system boundaries and trusted/sandboxed responsibilities.
+- [docs/demo-walkthrough.md](docs/demo-walkthrough.md) for a short high-level demo narrative and diagram.
 - [docs/room-sandbox.md](docs/room-sandbox.md) for the generated Three.js room contract.
 - [docs/api.md](docs/api.md) for HTTP endpoints and server-sent events.
 - [docs/testing.md](docs/testing.md) for test coverage and where to add new tests.
