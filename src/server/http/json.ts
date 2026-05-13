@@ -11,5 +11,6 @@ export async function readJson<T>(req: IncomingMessage): Promise<T> {
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store");
   res.end(JSON.stringify(body));
 }

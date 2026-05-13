@@ -279,7 +279,7 @@ async function applyLatestActiveScene() {
 
 async function loadRuntimeActiveSceneModule(): Promise<RoomSceneModule | null> {
   if (!state.user) return null;
-  const result = await api<ActiveSceneModuleSource>("/api/active-room/scene-module");
+  const result = await api<ActiveSceneModuleSource>(`/api/active-room/scene-module?t=${Date.now()}`);
   const url = URL.createObjectURL(new Blob([result.source], { type: "text/javascript" }));
   try {
     return await import(/* @vite-ignore */ url) as RoomSceneModule;

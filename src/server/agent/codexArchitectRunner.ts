@@ -279,7 +279,7 @@ function planSceneEditPhases(prompt: string): SceneEditPhase[] {
           "",
           "Phase 1: create a fast, complete, navigable blockout of the requested room.",
           "Prioritize the large layout, walkable floor, walls/openings, ceiling height, major silhouettes, and clear focal zones.",
-          "If the main path is not naturally visible from [0, 1.65, 0] looking down -Z, add a valid scene.userData.startPose or root.userData.startPose that opens onto the main route.",
+          "If the main path is not naturally visible from [0, 1.65, 4] looking down -Z, add a valid scene.userData.startPose or root.userData.startPose that opens onto the main route.",
           "Use simple but recognizable placeholder geometry for requested objects and decorative areas.",
           "Do not spend this phase on tiny ornament, dense repeated detail, or polish; the browser should get a usable first draft quickly.",
         ].join("\n"),

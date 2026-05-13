@@ -69,6 +69,7 @@ describe("ChatGPT auth HTTP flow", () => {
     const health = await request<{ ok: boolean }>(handler, "GET", "/api/health");
     expect(health.status).toBe(200);
     expect(health.body.ok).toBe(true);
+    expect(health.headers["cache-control"]).toBe("no-store");
   });
 
   it("allows deployment configuration to move the JSON store path", () => {

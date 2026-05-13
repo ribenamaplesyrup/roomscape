@@ -3,6 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import type { ViteDevServer } from "vite";
+import type { AgentEvent } from "../../shared/api";
 import { freshRoomConfig, type RoomConfig } from "../../shared/room";
 import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
@@ -214,6 +215,19 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
         .catch(() => undefined)
         .then(async () => {
           if (runVersion !== runState.generation || controller.signal.aborted) return;
+          let runnerEventQueue = Promise.resolve();
+          const enqueueRunnerEvent = (event: AgentEvent): void => {
+            runnerEventQueue = runnerEventQueue
+              .then(async () => {
+                if (runVersion !== runState.generation || controller.signal.aborted) return;
+                if (event.type === "room-updated") await activeRooms.saveConfig(user.id, event.config);
+                if (event.type === "scene-updated") await persistActiveScene(user.id, code);
+                bus.publish(runId, event);
+              })
+              .catch((error: unknown) => {
+                bus.publish(runId, { type: "error", message: error instanceof Error ? error.message : "Unable to process generated room update.", at: new Date().toISOString() });
+              });
+          };
           bus.publish(runId, { type: "log", message: "Starting queued room edit.", at: new Date().toISOString() });
           await runRunner.run(
             {
@@ -224,20 +238,9 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
               ...(codexHome ? { codexHome } : {}),
               signal: controller.signal,
             },
-            (event) => {
-              if (runVersion !== runState.generation || controller.signal.aborted) return;
-              if (event.type === "room-updated") void activeRooms.saveConfig(user.id, event.config);
-              if (event.type === "scene-updated") {
-                void persistActiveScene(user.id, code)
-                  .then(() => bus.publish(runId, event))
-                  .catch((error: unknown) => {
-                    bus.publish(runId, { type: "error", message: error instanceof Error ? error.message : "Unable to persist generated scene.", at: new Date().toISOString() });
-                  });
-                return;
-              }
-              bus.publish(runId, event);
-            },
+            enqueueRunnerEvent,
           );
+          await runnerEventQueue;
           await persistActiveScene(user.id, code);
         })
         .finally(() => {

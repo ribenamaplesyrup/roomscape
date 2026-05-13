@@ -7,7 +7,8 @@ export interface CameraPose {
   rotation: [number, number, number];
 }
 
-const defaultCameraPosition: [number, number, number] = [0, 1.65, 0];
+const defaultCameraPosition: [number, number, number] = [0, 1.65, 4];
+const legacyDefaultCameraPosition: [number, number, number] = [0, 1.65, 0];
 
 export class RoomRenderer {
   private readonly scene = new THREE.Scene();
@@ -107,6 +108,10 @@ export class RoomRenderer {
 
   /** Restores a saved pose after generated room code hot reloads. */
   public restorePose(pose: CameraPose): void {
+    if (isLegacyNeutralPose(pose)) {
+      this.resetPose();
+      return;
+    }
     this.camera.position.fromArray(pose.position);
     this.pitch = pose.rotation[0];
     this.yaw = pose.rotation[1];
@@ -295,6 +300,14 @@ export class RoomRenderer {
   private hasMovementInput(): boolean {
     return this.keys.has("ArrowUp") || this.keys.has("ArrowDown") || this.keys.has("ArrowRight") || this.keys.has("ArrowLeft");
   }
+}
+
+function isLegacyNeutralPose(pose: CameraPose): boolean {
+  return vectorsEqual(pose.position, legacyDefaultCameraPosition) && vectorsEqual(pose.rotation, [0, 0, 0]);
+}
+
+function vectorsEqual(left: [number, number, number], right: [number, number, number]): boolean {
+  return left.every((value, index) => Math.abs(value - right[index]!) < 0.0001);
 }
 
 function meshForObject(object: RoomObject): THREE.Object3D | null {
