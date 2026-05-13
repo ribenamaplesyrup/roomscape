@@ -187,4 +187,25 @@ describe("first-person navigation", () => {
     expect(remainingSpotLights.map((light) => light.name)).toContain("spot-6");
     expect([...remainingPointLights, ...remainingSpotLights].every((light) => !light.castShadow)).toBe(true);
   });
+
+  it("keeps a small shadow budget when generated scenes request soft shadows", () => {
+    const root = new THREE.Group();
+    for (let index = 0; index < 5; index += 1) {
+      const light = new THREE.SpotLight(0xffffff, index + 1, 12);
+      light.castShadow = true;
+      light.name = `shadow-${index}`;
+      root.add(light);
+    }
+
+    const stats = optimizeGeneratedScenePerformance(root, { maxShadowCastingLights: 2, shadowMapSize: 512 });
+    const shadowCasters: THREE.SpotLight[] = [];
+    root.traverse((object) => {
+      if (object instanceof THREE.SpotLight && object.castShadow) shadowCasters.push(object);
+    });
+
+    expect(stats.shadowCastingLightsDisabled).toBe(3);
+    expect(shadowCasters).toHaveLength(2);
+    expect(shadowCasters.map((light) => light.name)).toEqual(["shadow-3", "shadow-4"]);
+    expect(shadowCasters.every((light) => light.shadow.mapSize.width === 512)).toBe(true);
+  });
 });

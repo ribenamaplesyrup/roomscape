@@ -19,7 +19,7 @@ import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";
 
 export const roomTitle = "Readable title";
 
-export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {
+export function buildRoom({ THREE, root, scene, effects, lighting, materials }: RoomSceneContext): void {
   // Add Three.js objects to root and adjust scene background/fog as needed.
 }
 ```
@@ -27,6 +27,7 @@ export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {
 Allowed inside `buildRoom`:
 
 - Three.js geometry, materials, lights, fog, colors, textures, groups, and meshes.
+- Host-owned creative helpers through `effects`, `lighting`, and `materials`.
 - Pure helper functions and constants local to `roomScene.ts`.
 - Procedural `DataTexture` work.
 - Deterministic animation hooks through `scene.userData` or `root.userData`.
@@ -39,6 +40,29 @@ Not allowed:
 - Runtime imports or external assets.
 - Editing files other than `roomScene.ts`.
 - `THREE.*` namespace type annotations such as `: THREE.Mesh`; local values should infer types.
+
+## Host-Owned Creative Helpers
+
+Generated scenes can request richer rendering behavior through constrained helper APIs. The host still owns the renderer, camera, post-load performance budget, and shadow limits.
+
+```ts
+export function buildRoom({ lighting, effects, materials }: RoomSceneContext): void {
+  effects.setExposure(1.18);
+  effects.enableSoftShadows("medium");
+
+  lighting.addOfficeTroffer({
+    position: [0, 2.88, -1],
+    size: [1.2, 0.08, 0.5],
+    intensity: 1.4,
+    castShadow: true,
+  });
+
+  const glow = materials.makeGlowMaterial({ color: "#fff7d0", opacity: 0.22 });
+  // Use glow on a local mesh when a soft emissive cue is useful.
+}
+```
+
+Use actual lights, emissive diffuser materials, and these helper-created glows for ordinary architectural lighting. Do not add visible transparent cone, cylinder, or pyramid meshes as fake light beams unless the user explicitly asks for fog, haze, theatrical beams, or volumetric light.
 
 ## Animation Hooks
 
