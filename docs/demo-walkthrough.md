@@ -1,8 +1,8 @@
-# Demo Walkthrough
+# System Walkthrough
 
-Use this for a short, high-level hackathon walkthrough. The goal is to show the shape of the system, not every implementation detail.
+This walkthrough summarizes the shape of Roomscape for contributors, reviewers, and technical demos. It focuses on the system boundary between the trusted app and the generated room sandbox.
 
-## The Core Idea
+## Core Idea
 
 Roomscape embeds Codex as a runtime creative engine. The user sees a simple 3D surface, the trusted app harness keeps control of product responsibilities, and the agent edits only constrained scene code.
 
@@ -39,32 +39,29 @@ flowchart LR
   Store --> Api
 ```
 
-## What To Show In 2.5 Minutes
+## Key Flow
 
-1. Start with the diagram above.
-   Say: "Roomscape has a surface, a harness, and an agent. The surface is the 3D experience. The harness is the trusted product layer. The agent is Codex, constrained to scene code."
+1. A user prompts the Architect from the browser workspace.
+2. The trusted server starts or resumes a Codex SDK thread for the active room.
+3. Codex edits only the generated scene module inside the active room workspace.
+4. The app validates the generated scene contract and sandbox policy.
+5. Passing scene code is promoted into the active room and streamed back to the browser.
+6. Auth, persistence, telemetry, approvals, and isolation remain in the trusted app.
 
-2. Show the Codex runtime setup:
-   [`src/server/agent/codexArchitectRunner.ts`](../src/server/agent/codexArchitectRunner.ts)
+## Code Pointers
 
-   Best lines to highlight:
-   - `startThread(...)` shows Codex being used programmatically.
-   - `workingDirectory`, `approvalPolicy`, and `networkAccessEnabled` show the harness constraining the agent.
+[`src/server/agent/codexArchitectRunner.ts`](../src/server/agent/codexArchitectRunner.ts)
 
-3. Show validation and promotion:
-   [`src/server/agent/roomCodeRepository.ts`](../src/server/agent/roomCodeRepository.ts)
+Codex runtime setup. `startThread(...)` uses Codex programmatically, while `workingDirectory`, `approvalPolicy`, and `networkAccessEnabled` keep the agent inside the generated-room boundary.
 
-   Best lines to highlight:
-   - `validateSceneSource(...)` shows the harness refusing unsafe or broken generated code.
-   - `writeActiveSceneSource(...)` shows that code is promoted only after validation.
+[`src/server/agent/roomCodeRepository.ts`](../src/server/agent/roomCodeRepository.ts)
 
-4. Show the generated scene contract:
-   [`sandbox/rooms/active/roomScene.ts`](../sandbox/rooms/active/roomScene.ts)
+Validation and promotion. `validateSceneSource(...)` rejects unsafe or broken generated code, and `writeActiveSceneSource(...)` promotes code only after validation passes.
 
-   Best lines to highlight:
-   - `roomTitle`
-   - `buildRoom(...)`
+[`sandbox/rooms/active/roomScene.ts`](../sandbox/rooms/active/roomScene.ts)
 
-## One-Sentence Close
+Generated scene contract example. The sandboxed scene exposes `roomTitle` and `buildRoom(...)` while leaving cameras, renderers, networking, persistence, and DOM ownership to the trusted host.
 
-Codex is not just helping build the app; it is embedded inside the product as a bounded agent that turns natural language into validated, live 3D experiences.
+## Summary
+
+Codex is embedded inside Roomscape as a bounded runtime agent: natural language becomes generated Three.js scene code, and the trusted host validates that code before it becomes a live room.
