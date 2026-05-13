@@ -21,4 +21,14 @@ describe("active room repository", () => {
 
     expect(await repo.getConfig("new-user")).toEqual(freshRoomConfig());
   });
+
+  it("stores active scene source per user", async () => {
+    const repo = new ActiveRoomRepository(new MemoryStore());
+
+    await repo.saveSceneSource("user-a", "export const roomTitle = 'A';");
+    await repo.saveSceneSource("user-b", "export const roomTitle = 'B';");
+
+    expect(await repo.getSceneSource("user-a")).toContain("'A'");
+    expect(await repo.getSceneSource("user-b")).toContain("'B'");
+  });
 });

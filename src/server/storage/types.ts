@@ -33,6 +33,7 @@ export interface RoomRecord {
 export interface ActiveRoomRecord {
   userId: string;
   config: RoomConfig;
+  sceneSource?: string;
   updatedAt: string;
 }
 

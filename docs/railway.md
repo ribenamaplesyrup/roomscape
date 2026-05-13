@@ -47,10 +47,11 @@ The current Railway service has volume `roomscape-volume` attached to service `r
 
 ## User Isolation
 
-Saved rooms are scoped by `userId` in the storage layer, but production deployment still needs two larger changes before Roomscape should be considered safely multi-tenant:
+Saved rooms and active generated scene source are scoped by `userId` in the storage layer. Agent runs materialize that user's scene/config into a user-specific workspace under `ROOMSCAPE_WORKSPACE_DIR`, so one user's generated room scene is not served to another user.
+
+Production still needs one larger change before Roomscape should be considered durable multi-tenant infrastructure:
 
 1. Replace `JsonStore` with a database-backed store, preferably Railway PostgreSQL.
-2. Remove the shared `sandbox/rooms/active` runtime workspace from request handling. Generated room scene state should be stored per user/world, and each agent run should use a temporary per-run workspace.
 
 The target production model should be:
 
@@ -66,8 +67,7 @@ Every room/world query should include the authenticated user's id, and every age
 
 1. Deploy and test hosted ChatGPT device-code auth on Railway with a real ChatGPT account.
 2. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
-3. Move `activeConfig` out of process memory and into user/world scoped storage.
-4. Replace `sandbox/rooms/active` with temporary per-run workspaces and persisted per-world scene source.
+3. Move from one active world per user to explicit world ids for editing, saving, and loading.
 
 ## ChatGPT Auth
 
@@ -86,6 +86,7 @@ Key environment variables:
 - `ROOMSCAPE_DATA_DIR=/data`
 - `ROOMSCAPE_CHATGPT_LOGIN_FLOW=device_code`
 - `ROOMSCAPE_CODEX_AUTH_DIR=/data/codex-auth`
+- `ROOMSCAPE_WORKSPACE_DIR=/data/workspaces`
 - `ROOMSCAPE_CODEX_SANDBOX_MODE=danger-full-access`
 
 Railway containers currently block Codex's Linux bubblewrap sandbox with `bwrap: Failed to make / slave: Permission denied`. Roomscape therefore uses Codex `danger-full-access` on Railway, keeps network access disabled, and still rejects generated file changes outside the active room plus invalid scene source before promoting updates.

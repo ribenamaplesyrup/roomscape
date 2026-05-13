@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AgentRunBus, type ArchitectRunner } from "../src/server/agent/architectRunner";
+import { AgentRunBus, type ArchitectRunInput, type ArchitectRunner } from "../src/server/agent/architectRunner";
 import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import { createApp, roomscapeDataPath } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
@@ -75,6 +75,38 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_PATH: "/data/roomscape.json" })).toBe("/data/roomscape.json");
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "data.json"));
     expect(roomscapeDataPath("/app", {})).toBe(path.join("/app", ".roomscape", "data.json"));
+  });
+
+  it("scopes active generated scene source and workspaces to the authenticated OpenAI account", async () => {
+    const codex = new FakeCodexBridge();
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-workspaces-"));
+    const runnerFactory = new SceneWritingRunnerFactory();
+    const handler = createApp({
+      store: new MemoryStore(),
+      runnerFactory: (roomCode) => runnerFactory.create(roomCode),
+      bus: new AgentRunBus(),
+      workspaceRoot,
+      codex,
+    });
+
+    codex.account = { accountId: "acct-a", email: "a@example.com" };
+    const userA = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const userACookie = userA.headers["set-cookie"]!;
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "User A private tree", model: "gpt-5.3-codex-spark" }, userACookie);
+    await runnerFactory.waitForRunCount(1);
+
+    codex.account = { accountId: "acct-b", email: "b@example.com" };
+    const userB = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const userBCookie = userB.headers["set-cookie"]!;
+
+    const userAScene = await waitForScene(handler, userACookie, "User A private tree");
+    const userBScene = await request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, userBCookie);
+
+    expect(userAScene.body.source).toContain("User A private tree");
+    expect(userBScene.body.source).toContain("Bare Room");
+    expect(userBScene.body.source).not.toContain("User A private tree");
+    expect(runnerFactory.roots).toHaveLength(1);
+    expect(runnerFactory.roots[0]).toContain(workspaceRoot);
   });
 
   it("uses hosted device-code ChatGPT login defaults in production", () => {
@@ -357,6 +389,49 @@ class RecordingRunner implements ArchitectRunner {
   }
 }
 
+class SceneWritingRunnerFactory {
+  public readonly roots: string[] = [];
+  private runCount = 0;
+  private waiters: Array<() => void> = [];
+
+  public create(roomCode: RoomCodeRepository): ArchitectRunner {
+    this.roots.push(roomCode.sandboxRoot);
+    return {
+      run: async (input: ArchitectRunInput, emit) => {
+        await roomCode.writeSceneSource(sceneSource(input.prompt));
+        await roomCode.writeActiveSceneSource(sceneSource(input.prompt));
+        emit({ type: "scene-updated", at: new Date().toISOString() });
+        emit({ type: "complete", runId: input.runId, at: new Date().toISOString() });
+        this.runCount += 1;
+        this.flushWaiters();
+      },
+    };
+  }
+
+  public async waitForRunCount(count: number): Promise<void> {
+    if (this.runCount >= count) return;
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    await this.waitForRunCount(count);
+  }
+
+  private flushWaiters(): void {
+    const waiters = this.waiters.splice(0);
+    for (const waiter of waiters) waiter();
+  }
+}
+
+function sceneSource(title: string): string {
+  return `import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";
+
+export const roomTitle = ${JSON.stringify(title)};
+
+export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {
+  scene.background = new THREE.Color("#111111");
+  root.add(new THREE.Group());
+}
+`;
+}
+
 type AppHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 interface TestResponse<T> {
@@ -396,4 +471,13 @@ async function request<T>(handler: AppHandler, method: string, url: string, body
     headers,
     body: JSON.parse(payload || "{}") as T,
   };
+}
+
+async function waitForScene(handler: AppHandler, cookie: string, expected: string): Promise<TestResponse<{ source: string }>> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, cookie);
+    if (response.body.source.includes(expected)) return response;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, cookie);
 }

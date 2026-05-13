@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import type { ViteDevServer } from "vite";
 import { freshRoomConfig, type RoomConfig } from "../../shared/room";
 import { AuthService } from "../auth/service";
 import { AgentRunBus, type ArchitectRunner } from "../agent/architectRunner";
-import { RoomCodeRepository } from "../agent/roomCodeRepository";
+import { RoomCodeRepository, freshSceneSource, transpileSceneSource } from "../agent/roomCodeRepository";
 import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/appServerClient";
 import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
@@ -16,9 +16,11 @@ import { readJson, sendJson } from "./json";
 
 interface AppDeps {
   store: DataStore;
-  runner: ArchitectRunner;
+  runner?: ArchitectRunner;
+  runnerFactory?: (roomCode: RoomCodeRepository) => ArchitectRunner;
   bus: AgentRunBus;
   roomCode?: RoomCodeRepository;
+  workspaceRoot?: string;
   codex?: CodexAuthBridge;
   vite?: ViteDevServer;
   staticRoot?: string;
@@ -31,7 +33,7 @@ interface UserRunState {
   runIds: Set<string>;
 }
 
-export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoot }: AppDeps) {
+export function createApp({ store, runner, runnerFactory, bus, roomCode, workspaceRoot, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
   const rooms = new RoomRepository(store);
   const activeRooms = new ActiveRoomRepository(store);
@@ -149,8 +151,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     }
     if (req.method === "POST" && url.pathname === "/api/rooms") {
       const body = await readJson<{ name: string; config?: RoomConfig }>(req);
-      const code = requireRoomCode(roomCode);
-      const sceneSource = await code.readRawActiveScene();
+      const sceneSource = await activeRooms.getSceneSource(user.id);
       const activeConfig = await activeRooms.getConfig(user.id);
       sendJson(res, 201, { room: await rooms.save(user.id, body.name, body.config ?? activeConfig, sceneSource) });
       return;
@@ -160,7 +161,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const room = await rooms.get(user.id, roomMatch[1]);
       if (!room) throw new HttpError(404, "Room not found.");
       const activeConfig = await activeRooms.saveConfig(user.id, { ...room.config, name: room.name });
-      const code = requireRoomCode(roomCode);
+      const code = await roomCodeForUser(user.id);
       await code.writeConfig(activeConfig);
       const normalizedSceneSource = code.normalizeSceneSource(room.sceneSource);
       await code.writeSceneSource(normalizedSceneSource);
@@ -169,6 +170,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         throw new HttpError(422, `Saved scene is invalid:\n${validationErrors.join("\n")}`);
       }
       await code.writeActiveSceneSource(normalizedSceneSource);
+      await activeRooms.saveSceneSource(user.id, normalizedSceneSource);
       sendJson(res, 200, { room: { ...room, config: activeConfig } });
       return;
     }
@@ -177,16 +179,17 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/active-room/scene-module") {
-      const code = requireRoomCode(roomCode);
-      sendJson(res, 200, { source: await code.readActiveSceneJavaScript() });
+      sendJson(res, 200, { source: transpileSceneSource(await activeRooms.getSceneSource(user.id)) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
       cancelUserRuns(user.id, "Room reset; cleared active room edits.");
       const activeConfig = await activeRooms.saveConfig(user.id, freshRoomConfig());
-      const code = requireRoomCode(roomCode);
+      const sceneSource = await activeRooms.saveSceneSource(user.id, freshSceneSource());
+      const code = await roomCodeForUser(user.id);
       await code.writeConfig(activeConfig);
-      await code.writeFreshScene();
+      await code.writeSceneSource(sceneSource);
+      await code.writeActiveSceneSource(sceneSource);
       sendJson(res, 200, { config: activeConfig });
       return;
     }
@@ -198,6 +201,9 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
       const controller = new AbortController();
       const activeConfig = await activeRooms.getConfig(user.id);
       const currentConfig = body.currentConfig ?? activeConfig;
+      const code = await roomCodeForUser(user.id);
+      await materializeActiveRoom(user.id, code, currentConfig);
+      const runRunner = runnerFactory ? runnerFactory(code) : requireRunner(runner);
       runState.controllers.add(controller);
       runState.runIds.add(runId);
       runOwners.set(runId, user.id);
@@ -209,7 +215,7 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
         .then(async () => {
           if (runVersion !== runState.generation || controller.signal.aborted) return;
           bus.publish(runId, { type: "log", message: "Starting queued room edit.", at: new Date().toISOString() });
-          await runner.run(
+          await runRunner.run(
             {
               runId,
               prompt: body.prompt,
@@ -221,9 +227,18 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
             (event) => {
               if (runVersion !== runState.generation || controller.signal.aborted) return;
               if (event.type === "room-updated") void activeRooms.saveConfig(user.id, event.config);
+              if (event.type === "scene-updated") {
+                void persistActiveScene(user.id, code)
+                  .then(() => bus.publish(runId, event))
+                  .catch((error: unknown) => {
+                    bus.publish(runId, { type: "error", message: error instanceof Error ? error.message : "Unable to persist generated scene.", at: new Date().toISOString() });
+                  });
+                return;
+              }
               bus.publish(runId, event);
             },
           );
+          await persistActiveScene(user.id, code);
         })
         .finally(() => {
           runState.controllers.delete(controller);
@@ -287,6 +302,31 @@ export function createApp({ store, runner, bus, roomCode, codex, vite, staticRoo
     const data = await store.read();
     return data.users.find((candidate) => candidate.id === userId) ?? null;
   }
+
+  async function roomCodeForUser(userId: string): Promise<RoomCodeRepository> {
+    if (!workspaceRoot) return requireRoomCode(roomCode);
+    const root = path.join(workspaceRoot, safePathSegment(userId));
+    await mkdir(root, { recursive: true });
+    return new RoomCodeRepository(root);
+  }
+
+  async function materializeActiveRoom(userId: string, code: RoomCodeRepository, config: RoomConfig): Promise<void> {
+    const sceneSource = await activeRooms.getSceneSource(userId);
+    await code.writeConfig(config);
+    await code.writeSceneSource(sceneSource);
+    await code.writeActiveSceneSource(sceneSource);
+  }
+
+  async function persistActiveScene(userId: string, code: RoomCodeRepository): Promise<void> {
+    await activeRooms.saveSceneSource(userId, await code.readRawActiveScene());
+  }
+}
+
+function requireRunner(runner: ArchitectRunner | undefined): ArchitectRunner {
+  if (!runner) {
+    throw new HttpError(503, "Architect runner is not available.");
+  }
+  return runner;
 }
 
 function requireCodexBridge(codex: CodexAuthBridge | undefined): CodexAuthBridge {
@@ -332,6 +372,16 @@ export function roomscapeDataPath(cwd = process.cwd(), env = process.env): strin
   if (env.ROOMSCAPE_DATA_PATH) return env.ROOMSCAPE_DATA_PATH;
   if (env.ROOMSCAPE_DATA_DIR) return path.join(env.ROOMSCAPE_DATA_DIR, "data.json");
   return path.join(cwd, ".roomscape", "data.json");
+}
+
+export function roomscapeWorkspaceRoot(cwd = process.cwd(), env = process.env): string {
+  if (env.ROOMSCAPE_WORKSPACE_DIR) return env.ROOMSCAPE_WORKSPACE_DIR;
+  if (env.ROOMSCAPE_DATA_DIR) return path.join(env.ROOMSCAPE_DATA_DIR, "workspaces");
+  return path.join(cwd, ".roomscape", "workspaces");
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
 async function serveStatic(res: ServerResponse, url: URL, staticRoot: string): Promise<void> {

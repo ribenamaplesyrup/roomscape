@@ -197,7 +197,7 @@ function findUnsafeShorthandProperties(source: string): string[] {
   return unsafe;
 }
 
-function freshSceneSource(): string {
+export function freshSceneSource(): string {
   return `import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";
 
 export const roomTitle = "Bare Room";
