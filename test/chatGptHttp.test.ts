@@ -9,6 +9,7 @@ import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import { roomscapeDataPath, roomscapeWorkspaceRoot } from "../src/server/config/paths";
 import { createApp } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
+import { ActiveRoomRepository } from "../src/server/storage/activeRoomRepository";
 import type { DataStore, UserRecord } from "../src/server/storage/types";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
 import { chatGptLoginFlow, roomscapeCodexAuthRoot } from "../src/server/codex/userAuthCoordinator";
@@ -224,6 +225,47 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(loaded.body.room.config.name).toBe("Saved scene");
     await expect(readFile(path.join(roomRoot, "roomConfig.ts"), "utf8")).resolves.toContain('name": "Saved scene"');
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
+  });
+
+  it("overwrites an existing saved room when saving the same title again", async () => {
+    const codex = new FakeCodexBridge();
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com" };
+    const store = new MemoryStore();
+    const activeRooms = new ActiveRoomRepository(store);
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-overwrite-"));
+    const roomCode = new RoomCodeRepository(roomRoot);
+    await roomCode.writeFreshScene();
+    const handler = createApp({
+      store,
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode,
+      codex,
+    });
+    const login = await request<{ status: string; user: { id: string } }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const cookie = login.headers["set-cookie"];
+
+    const first = await request<{ room: { id: string; sceneSource: string } }>(
+      handler,
+      "POST",
+      "/api/rooms",
+      { name: "Saved scene", config: { ...emptyRoomConfig, name: "First active name" } },
+      cookie,
+    );
+    await activeRooms.saveSceneSource(login.body.user.id, sceneSource("Updated saved scene"));
+    const second = await request<{ room: { id: string; config: { name: string }; sceneSource: string } }>(
+      handler,
+      "POST",
+      "/api/rooms",
+      { name: "  saved   SCENE  ", config: { ...emptyRoomConfig, name: "Second active name" } },
+      cookie,
+    );
+    const rooms = await request<{ rooms: Array<{ id: string; name: string }> }>(handler, "GET", "/api/rooms", undefined, cookie);
+
+    expect(second.body.room.id).toBe(first.body.room.id);
+    expect(second.body.room.config.name).toBe("saved   SCENE");
+    expect(second.body.room.sceneSource).toContain("Updated saved scene");
+    expect(rooms.body.rooms.map((room) => ({ id: room.id, name: room.name }))).toEqual([{ id: first.body.room.id, name: "saved   SCENE" }]);
   });
 
   it("forgets the remembered ChatGPT device on sign-out so fresh login can replace stale Codex tokens", async () => {

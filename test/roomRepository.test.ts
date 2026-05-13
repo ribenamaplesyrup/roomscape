@@ -13,4 +13,27 @@ describe("room repository", () => {
     expect(await repo.get("user-b", room.id)).toBeNull();
     expect(await repo.listForUser("user-a")).toHaveLength(1);
   });
+
+  it("overwrites an existing room when the same user saves the same title", async () => {
+    const repo = new RoomRepository(new MemoryStore());
+    const first = await repo.save("user-a", "First room", { ...emptyRoomConfig, name: "Draft" }, "export const roomTitle = 'First';");
+    const second = await repo.save("user-a", "  first   ROOM  ", { ...emptyRoomConfig, name: "Updated draft" }, "export const roomTitle = 'Second';");
+
+    expect(second.id).toBe(first.id);
+    expect(second.createdAt).toBe(first.createdAt);
+    expect(second.name).toBe("first   ROOM");
+    expect(second.config.name).toBe("first   ROOM");
+    expect(second.sceneSource).toBe("export const roomTitle = 'Second';");
+    expect(await repo.listForUser("user-a")).toHaveLength(1);
+  });
+
+  it("does not overwrite another user's room with the same title", async () => {
+    const repo = new RoomRepository(new MemoryStore());
+    const first = await repo.save("user-a", "Shared title", emptyRoomConfig, "export const roomTitle = 'A';");
+    const second = await repo.save("user-b", "shared title", emptyRoomConfig, "export const roomTitle = 'B';");
+
+    expect(second.id).not.toBe(first.id);
+    expect(await repo.listForUser("user-a")).toHaveLength(1);
+    expect(await repo.listForUser("user-b")).toHaveLength(1);
+  });
 });

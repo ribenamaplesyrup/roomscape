@@ -112,7 +112,7 @@ Body:
 { "name": "Warm studio", "config": {} }
 ```
 
-The server uses the stored active config when `config` is omitted and captures `activeRoomScene.ts` as the saved scene source.
+The server uses the stored active config when `config` is omitted and captures `activeRoomScene.ts` as the saved scene source. Saving with the same title as an existing room owned by the current user overwrites that saved room instead of creating a duplicate.
 
 ### `GET /api/rooms/:id`
 
