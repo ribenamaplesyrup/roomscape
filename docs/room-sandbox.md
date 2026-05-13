@@ -1,6 +1,6 @@
 # Room Sandbox
 
-Roomscape keeps generated room code in `sandbox/rooms/active`. The live Codex runner starts in that directory and is instructed to edit only `roomScene.ts`.
+Roomscape keeps the starter generated room contract in `sandbox/rooms/active`. The live Codex runner materializes each authenticated user's active scene into that user's workspace under `ROOMSCAPE_WORKSPACE_DIR` and is instructed to edit only `roomScene.ts` there.
 
 ## Files
 
@@ -8,7 +8,7 @@ Roomscape keeps generated room code in `sandbox/rooms/active`. The live Codex ru
 - `activeRoomScene.ts`: browser-facing copy promoted only after validation passes.
 - `roomConfig.ts`: generated `RoomConfig` module used by reset and legacy config rendering.
 
-The server owns copying and validation. The client imports `activeRoomScene.ts`, not `roomScene.ts`.
+The server owns copying, validation, persistence, and promotion. The client requests the validated active scene module from the server; it does not trust raw Codex edits in `roomScene.ts`.
 
 ## Scene Module Contract
 

@@ -21,20 +21,20 @@ Smoke checks:
 
 - Deploy from the repository root.
 - Railway will use `railway.json` and the root `Dockerfile`.
-- The app listens on `process.env.PORT` and defaults to `0.0.0.0`, which allows Railway to route public traffic to it.
+- The Docker image sets `HOST=0.0.0.0` and listens on `process.env.PORT`, which allows Railway to route public traffic to it.
 - Configure Railway's healthcheck path as `/api/health` if you override the checked-in config.
 - Keep the checked-in `.dockerignore` in place so local data, build output, dependencies, and Git metadata are not copied into the image.
 
 ## Runtime Variables
 
 - `PORT`: injected by Railway.
-- `HOST`: optional; defaults to `0.0.0.0`.
+- `HOST`: set to `0.0.0.0` for Railway and other container hosts. Local development defaults to `127.0.0.1`.
 - `ROOMSCAPE_DATA_DIR`: optional directory for JSON fallback data, Codex auth homes, and user workspaces.
 - `ROOMSCAPE_DATA_PATH`: optional full path to the JSON store. Takes precedence over `ROOMSCAPE_DATA_DIR`.
 - `DATABASE_URL`: enables the PostgreSQL-backed store. On Railway, attach a PostgreSQL service and reference its private connection URL.
 - `ROOMSCAPE_DATABASE_SSL`: optional PostgreSQL TLS mode. Use `require` for external endpoints that need TLS. Railway private Postgres URLs normally do not need this.
 
-Use `.env.example` as the local template.
+Use `.env.example` as the local template, then uncomment only the production-specific variables you need in a hosted environment.
 
 ## Persistent Data
 
