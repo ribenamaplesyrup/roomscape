@@ -1,0 +1,841 @@
+import type { RoomSceneContext } from "../../../src/client/room/sceneTypes";
+
+export const roomTitle = "Aurora Atlas Lounge";
+
+export function buildRoom({ THREE, root, scene, effects, lighting, materials }: RoomSceneContext): void {
+  const effectHelpers = effects as {
+    setExposure?: (exposure: number) => void;
+    enableSoftShadows?: () => void;
+  };
+  const materialHelpers = materials as {
+    makeGlowMaterial?: (...args: unknown[]) => unknown;
+  };
+  void lighting;
+
+  try {
+    effectHelpers.setExposure?.(1.14);
+    effectHelpers.enableSoftShadows?.();
+  } catch {
+    // Host helpers are optional across Roomscape builds.
+  }
+
+  scene.background = new THREE.Color("#08131d");
+  scene.fog = new THREE.Fog("#08131d", 11, 27);
+  scene.userData.startPose = { position: [0, 1.65, 4.35], rotation: [0, 0, 0] };
+  root.userData.startPose = scene.userData.startPose;
+
+  const collidable = (object: { userData: Record<string, unknown> }, value: boolean) => {
+    object.userData.collider = value;
+    return object;
+  };
+
+  const finite = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
+  const positive = (value: number, fallback: number) => {
+    const checked = finite(value, fallback);
+    return checked > 0 ? checked : fallback;
+  };
+  const boxGeometry = (width: number, height: number, depth: number) =>
+    new THREE.BoxGeometry(positive(width, 0.001), positive(height, 0.001), positive(depth, 0.001));
+  const setPosition = (
+    object: { position: { set: (x: number, y: number, z: number) => void } },
+    x: number,
+    y: number,
+    z: number,
+  ) => {
+    object.position.set(finite(x, 0), finite(y, 0), finite(z, 0));
+  };
+  const setScale = (
+    object: { scale: { set: (x: number, y: number, z: number) => void } },
+    x: number,
+    y: number,
+    z: number,
+  ) => {
+    object.scale.set(positive(x, 1), positive(y, 1), positive(z, 1));
+  };
+  const setScaleScalar = (object: { scale: { setScalar: (value: number) => void } }, value: number) => {
+    object.scale.setScalar(positive(value, 1));
+  };
+
+  const tryGlowMaterial = (color: string, opacity: number): any => {
+    try {
+      const glow = materialHelpers.makeGlowMaterial?.({ color, opacity, intensity: 1.4 });
+      if (glow) {
+        return glow;
+      }
+    } catch {
+      // Fall through to a local additive material.
+    }
+    return new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  };
+
+  const makeCircularGlowTexture = (inner: [number, number, number], outer: [number, number, number]) => {
+    const size = 64;
+    const data = new Uint8Array(size * size * 4);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const dx = (x + 0.5) / size - 0.5;
+        const dy = (y + 0.5) / size - 0.5;
+        const radius = Math.sqrt(dx * dx + dy * dy) * 2;
+        const falloff = Math.max(0, 1 - radius);
+        const glow = falloff * falloff * (3 - 2 * falloff);
+        const index = (y * size + x) * 4;
+        const [ir, ig, ib] = inner;
+        const [or, og, ob] = outer;
+        data[index] = Math.round(or + (ir - or) * glow);
+        data[index + 1] = Math.round(og + (ig - og) * glow);
+        data[index + 2] = Math.round(ob + (ib - ob) * glow);
+        data[index + 3] = Math.round(255 * Math.max(0, glow));
+      }
+    }
+    const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    texture.needsUpdate = true;
+    return texture;
+  };
+
+  const makeGrainTexture = (base: [number, number, number], accent: [number, number, number], size: number, stripeEvery: number) => {
+    const data = new Uint8Array(size * size * 4);
+    const [br, bg, bb] = base;
+    const [ar, ag, ab] = accent;
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const grain = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+        const noise = grain - Math.floor(grain);
+        const stripe = x % stripeEvery === 0 || y % stripeEvery === 0 ? 0.18 : 0;
+        const mix = Math.min(1, 0.18 + noise * 0.22 + stripe);
+        const index = (y * size + x) * 4;
+        data[index] = Math.round(br + (ar - br) * mix);
+        data[index + 1] = Math.round(bg + (ag - bg) * mix);
+        data[index + 2] = Math.round(bb + (ab - bb) * mix);
+        data[index + 3] = 255;
+      }
+    }
+    const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.needsUpdate = true;
+    return texture;
+  };
+
+  const floorTexture = makeGrainTexture([18, 33, 40], [65, 82, 88], 96, 24);
+  floorTexture.repeat.set(5, 5);
+  const wallTexture = makeGrainTexture([31, 48, 58], [74, 94, 104], 96, 32);
+  wallTexture.repeat.set(3, 2);
+
+  const shellGroup = new THREE.Group();
+  shellGroup.name = "10x10 observatory conservatory shell";
+  root.add(shellGroup);
+
+  const floorMaterial = new THREE.MeshStandardMaterial({
+    color: "#1a2931",
+    map: floorTexture,
+    roughness: 0.62,
+    metalness: 0.12,
+  });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), floorMaterial);
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  shellGroup.add(floor);
+
+  const ceilingMaterial = new THREE.MeshStandardMaterial({
+    color: "#10202b",
+    roughness: 0.76,
+    metalness: 0.04,
+    emissive: "#06111a",
+    emissiveIntensity: 0.32,
+  });
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), ceilingMaterial);
+  ceiling.position.y = 4.2;
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.receiveShadow = true;
+  shellGroup.add(ceiling);
+
+  const wallMaterial = new THREE.MeshStandardMaterial({
+    color: "#263743",
+    map: wallTexture,
+    roughness: 0.84,
+    metalness: 0.04,
+  });
+  const wallGeometry = new THREE.PlaneGeometry(10, 4.2);
+  const wallDefinitions: Array<[number, number, number, number]> = [
+    [0, 2.1, -5, 0],
+    [0, 2.1, 5, Math.PI],
+    [-5, 2.1, 0, Math.PI / 2],
+    [5, 2.1, 0, -Math.PI / 2],
+  ];
+  for (const [x, y, z, rotationY] of wallDefinitions) {
+    const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+    setPosition(wall, x, y, z);
+    wall.rotation.y = rotationY;
+    wall.receiveShadow = true;
+    shellGroup.add(wall);
+  }
+
+  const trimMaterial = new THREE.MeshStandardMaterial({
+    color: "#7aa6ad",
+    roughness: 0.38,
+    metalness: 0.55,
+  });
+  const baseTrimGeometry = boxGeometry(10.05, 0.12, 0.12);
+  const sideTrimGeometry = boxGeometry(0.12, 0.12, 10.05);
+  const rearBase = new THREE.Mesh(baseTrimGeometry, trimMaterial);
+  setPosition(rearBase, 0, 0.09, -4.94);
+  const frontBase = new THREE.Mesh(baseTrimGeometry, trimMaterial);
+  setPosition(frontBase, 0, 0.09, 4.94);
+  const leftBase = new THREE.Mesh(sideTrimGeometry, trimMaterial);
+  setPosition(leftBase, -4.94, 0.09, 0);
+  const rightBase = new THREE.Mesh(sideTrimGeometry, trimMaterial);
+  setPosition(rightBase, 4.94, 0.09, 0);
+  const rearCrown = new THREE.Mesh(baseTrimGeometry, trimMaterial);
+  setPosition(rearCrown, 0, 4.08, -4.94);
+  const frontCrown = new THREE.Mesh(baseTrimGeometry, trimMaterial);
+  setPosition(frontCrown, 0, 4.08, 4.94);
+  const leftCrown = new THREE.Mesh(sideTrimGeometry, trimMaterial);
+  setPosition(leftCrown, -4.94, 4.08, 0);
+  const rightCrown = new THREE.Mesh(sideTrimGeometry, trimMaterial);
+  setPosition(rightCrown, 4.94, 4.08, 0);
+  shellGroup.add(rearBase, frontBase, leftBase, rightBase, rearCrown, frontCrown, leftCrown, rightCrown);
+
+  const wallWashMaterial = new THREE.MeshBasicMaterial({
+    color: "#69f0ff",
+    transparent: true,
+    opacity: 0.18,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const rearGlowLeft = collidable(new THREE.Mesh(boxGeometry(0.035, 2.65, 0.018), wallWashMaterial.clone()), false);
+  const rearGlowRight = collidable(new THREE.Mesh(boxGeometry(0.035, 2.65, 0.018), wallWashMaterial.clone()), false);
+  setPosition(rearGlowLeft, -4.55, 2.18, -4.875);
+  setPosition(rearGlowRight, 4.55, 2.18, -4.875);
+  const sideGlowLeft = collidable(new THREE.Mesh(boxGeometry(0.018, 2.2, 0.035), wallWashMaterial.clone()), false);
+  const sideGlowRight = collidable(new THREE.Mesh(boxGeometry(0.018, 2.2, 0.035), wallWashMaterial.clone()), false);
+  setPosition(sideGlowLeft, -4.875, 2.02, 3.35);
+  setPosition(sideGlowRight, 4.875, 2.02, 3.35);
+  shellGroup.add(rearGlowLeft, rearGlowRight, sideGlowLeft, sideGlowRight);
+
+  const floorAccentMaterial = new THREE.MeshStandardMaterial({
+    color: "#cfb77a",
+    roughness: 0.32,
+    metalness: 0.62,
+  });
+  const centralRing = collidable(
+    new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.035, 12, 96), floorAccentMaterial),
+    false,
+  );
+  centralRing.rotation.x = -Math.PI / 2;
+  centralRing.position.y = 0.025;
+  shellGroup.add(centralRing);
+  for (let i = 0; i < 8; i += 1) {
+    const spoke = collidable(new THREE.Mesh(boxGeometry(0.045, 0.025, 3.25), floorAccentMaterial), false);
+    spoke.position.y = 0.035;
+    spoke.rotation.y = (i * Math.PI) / 4;
+    shellGroup.add(spoke);
+  }
+
+  const atlasGroup = new THREE.Group();
+  atlasGroup.name = "floating atlas centerpiece";
+  root.add(atlasGroup);
+
+  const tableMaterial = new THREE.MeshStandardMaterial({
+    color: "#16242c",
+    roughness: 0.48,
+    metalness: 0.34,
+  });
+  const tableBase = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.6, 0.32, 96), tableMaterial);
+  tableBase.position.y = 0.24;
+  tableBase.castShadow = true;
+  tableBase.receiveShadow = true;
+  atlasGroup.add(tableBase);
+  const tableRim = collidable(new THREE.Mesh(new THREE.TorusGeometry(1.48, 0.055, 12, 128), floorAccentMaterial), false);
+  tableRim.position.y = 0.43;
+  tableRim.rotation.x = -Math.PI / 2;
+  const tableFoot = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.78, 0.18, 72), tableMaterial);
+  tableFoot.position.y = 0.09;
+  tableFoot.receiveShadow = true;
+  tableFoot.castShadow = true;
+  atlasGroup.add(tableRim, tableFoot);
+
+  const waterMaterial = new THREE.MeshStandardMaterial({
+    color: "#143a49",
+    roughness: 0.18,
+    metalness: 0.02,
+    transparent: true,
+    opacity: 0.82,
+    emissive: "#0e6d7b",
+    emissiveIntensity: 0.22,
+  });
+  const water = collidable(new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.035, 96), waterMaterial), false);
+  water.position.y = 0.43;
+  atlasGroup.add(water);
+  const waterLens = collidable(
+    new THREE.Mesh(
+      new THREE.SphereGeometry(1.04, 48, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: "#c8fbff",
+        transparent: true,
+        opacity: 0.08,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    ),
+    false,
+  );
+  waterLens.position.y = 0.445;
+  waterLens.scale.y = 0.04;
+  atlasGroup.add(waterLens);
+  const rippleMaterial = new THREE.MeshBasicMaterial({
+    color: "#9ff8ff",
+    transparent: true,
+    opacity: 0.32,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const rippleInnerMaterial = rippleMaterial.clone();
+  const rippleOuterMaterial = rippleMaterial.clone();
+  const rippleInner = collidable(new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.006, 6, 96), rippleInnerMaterial), false);
+  const rippleOuter = collidable(new THREE.Mesh(new THREE.TorusGeometry(0.93, 0.006, 6, 96), rippleOuterMaterial), false);
+  rippleInner.position.y = 0.456;
+  rippleOuter.position.y = 0.458;
+  rippleInner.rotation.x = -Math.PI / 2;
+  rippleOuter.rotation.x = -Math.PI / 2;
+  atlasGroup.add(rippleInner, rippleOuter);
+
+  const orbMaterial = new THREE.MeshStandardMaterial({
+    color: "#86f4ff",
+    roughness: 0.24,
+    metalness: 0.04,
+    transparent: true,
+    opacity: 0.72,
+    emissive: "#36d8ff",
+    emissiveIntensity: 1.55,
+  });
+  const orb = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.58, 48, 32), orbMaterial), false);
+  orb.position.y = 2.22;
+  atlasGroup.add(orb);
+
+  const glowMaterial = tryGlowMaterial("#46e8ff", 0.24);
+  const orbHalo = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.86, 48, 32), glowMaterial), false);
+  orbHalo.position.y = 2.22;
+  atlasGroup.add(orbHalo);
+
+  const atlasConstellation = new THREE.Group();
+  atlasConstellation.name = "orb surface constellation";
+  atlasConstellation.position.y = 2.22;
+  atlasGroup.add(atlasConstellation);
+  const constellationMaterial = new THREE.MeshBasicMaterial({
+    color: "#f4fdff",
+    transparent: true,
+    opacity: 0.64,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const constellationPoints: Array<[number, number, number]> = [
+    [-0.24, 0.36, 0.43],
+    [0.18, 0.46, 0.31],
+    [0.42, 0.14, 0.34],
+    [0.12, -0.12, 0.54],
+    [-0.33, -0.22, 0.39],
+    [-0.47, 0.08, 0.25],
+  ];
+  const constellationSegments: Array<[[number, number, number], [number, number, number]]> = [
+    [[-0.24, 0.36, 0.43], [0.18, 0.46, 0.31]],
+    [[0.18, 0.46, 0.31], [0.42, 0.14, 0.34]],
+    [[0.42, 0.14, 0.34], [0.12, -0.12, 0.54]],
+    [[0.12, -0.12, 0.54], [-0.33, -0.22, 0.39]],
+    [[-0.33, -0.22, 0.39], [-0.47, 0.08, 0.25]],
+    [[-0.47, 0.08, 0.25], [-0.24, 0.36, 0.43]],
+  ];
+  for (const [x, y, z] of constellationPoints) {
+    const node = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 8), constellationMaterial), false);
+    setPosition(node, x, y, z);
+    atlasConstellation.add(node);
+  }
+  for (const [start, end] of constellationSegments) {
+    const [startX, startY, startZ] = start;
+    const [endX, endY, endZ] = end;
+    const path = new THREE.LineCurve3(new THREE.Vector3(startX, startY, startZ), new THREE.Vector3(endX, endY, endZ));
+    const segment = collidable(new THREE.Mesh(new THREE.TubeGeometry(path, 5, 0.006, 6, false), constellationMaterial), false);
+    atlasConstellation.add(segment);
+  }
+
+  const atlasLines = new THREE.Group();
+  atlasLines.name = "atlas orbit rings";
+  atlasGroup.add(atlasLines);
+  const orbitMaterial = new THREE.MeshStandardMaterial({
+    color: "#d9faff",
+    roughness: 0.28,
+    metalness: 0.2,
+    emissive: "#54d8ff",
+    emissiveIntensity: 0.65,
+  });
+  const ringA = collidable(new THREE.Mesh(new THREE.TorusGeometry(0.98, 0.012, 8, 128), orbitMaterial), false);
+  const ringB = collidable(new THREE.Mesh(new THREE.TorusGeometry(1.16, 0.01, 8, 128), orbitMaterial), false);
+  const ringC = collidable(new THREE.Mesh(new THREE.TorusGeometry(1.34, 0.008, 8, 128), orbitMaterial), false);
+  ringA.position.y = 2.22;
+  ringB.position.y = 2.22;
+  ringC.position.y = 2.22;
+  ringA.rotation.x = Math.PI / 2.8;
+  ringB.rotation.x = Math.PI / 2;
+  ringB.rotation.z = Math.PI / 5;
+  ringC.rotation.x = Math.PI / 1.9;
+  ringC.rotation.y = Math.PI / 5.5;
+  atlasLines.add(ringA, ringB, ringC);
+
+  const satelliteMaterial = new THREE.MeshStandardMaterial({
+    color: "#fff3b2",
+    roughness: 0.35,
+    metalness: 0.18,
+    emissive: "#f2c65d",
+    emissiveIntensity: 0.8,
+  });
+  const satellitePositions: Array<[number, number, number]> = [
+    [1.02, 2.38, 0.18],
+    [-0.72, 2.02, 0.86],
+    [0.34, 2.66, -1.06],
+    [-1.18, 2.34, -0.38],
+  ];
+  for (const [x, y, z] of satellitePositions) {
+    const satellite = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), satelliteMaterial), false);
+    setPosition(satellite, x, y, z);
+    atlasLines.add(satellite);
+  }
+
+  const auroraGroup = new THREE.Group();
+  auroraGroup.name = "ceiling aurora ribbons";
+  root.add(auroraGroup);
+  const auroraGreenMaterial = new THREE.MeshBasicMaterial({
+    color: "#4effd2",
+    transparent: true,
+    opacity: 0.34,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const auroraBlueMaterial = new THREE.MeshBasicMaterial({
+    color: "#8aa7ff",
+    transparent: true,
+    opacity: 0.26,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const auroraAmberMaterial = new THREE.MeshBasicMaterial({
+    color: "#ffc979",
+    transparent: true,
+    opacity: 0.18,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const ribbonConfigs = [
+    { ribbonIndex: 0, offsetZ: -1.2, radius: 0.025, material: auroraGreenMaterial },
+    { ribbonIndex: 1, offsetZ: 0, radius: 0.029, material: auroraBlueMaterial },
+    { ribbonIndex: 2, offsetZ: 1.15, radius: 0.033, material: auroraAmberMaterial },
+  ];
+  for (const { ribbonIndex, offsetZ, radius, material } of ribbonConfigs) {
+    const points = [];
+    for (let i = 0; i < 9; i += 1) {
+      const x = -4.2 + i * 1.05;
+      const y = 3.72 + Math.sin(i * 0.85 + ribbonIndex) * 0.22;
+      const z = offsetZ + Math.cos(i * 0.65 + ribbonIndex) * 0.28;
+      points.push(new THREE.Vector3(x, y, z));
+    }
+    const curve = new THREE.CatmullRomCurve3(points);
+    const ribbon = collidable(new THREE.Mesh(new THREE.TubeGeometry(curve, 64, radius, 8, false), material), false);
+    auroraGroup.add(ribbon);
+  }
+
+  const starTexture = makeCircularGlowTexture([255, 255, 235], [80, 180, 255]);
+  const starMaterial = new THREE.SpriteMaterial({
+    map: starTexture,
+    color: "#dff8ff",
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const starPositions: Array<[number, number, number, number]> = [
+    [-3.8, 3.55, -4.82, 0.16],
+    [-2.4, 3.05, -4.83, 0.11],
+    [-0.7, 3.48, -4.82, 0.14],
+    [1.2, 3.18, -4.83, 0.12],
+    [3.5, 3.62, -4.82, 0.18],
+    [-4.82, 3.35, -2.1, 0.12],
+    [4.82, 3.18, -1.4, 0.13],
+    [-4.82, 2.82, 2.2, 0.1],
+    [4.82, 2.92, 2.6, 0.1],
+  ];
+  for (const [x, y, z, size] of starPositions) {
+    const star = collidable(new THREE.Sprite(starMaterial.clone()), false);
+    setPosition(star, x, y, z);
+    setScale(star, size, size, size);
+    root.add(star);
+  }
+  const ceilingStarGeometry = new THREE.BufferGeometry();
+  const ceilingStarPositions: number[] = [];
+  for (let i = 0; i < 72; i += 1) {
+    const xNoise = Math.sin(i * 17.23) * 0.5 + 0.5;
+    const zNoise = Math.sin(i * 43.11 + 1.7) * 0.5 + 0.5;
+    const x = -4.55 + xNoise * 9.1;
+    const y = 4.035;
+    const z = -4.45 + zNoise * 8.9;
+    ceilingStarPositions.push(x, y, z);
+  }
+  ceilingStarGeometry.setAttribute("position", new THREE.Float32BufferAttribute(ceilingStarPositions, 3));
+  const ceilingStars = collidable(
+    new THREE.Points(
+      ceilingStarGeometry,
+      new THREE.PointsMaterial({
+        color: "#d8fbff",
+        size: 0.035,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    ),
+    false,
+  );
+  root.add(ceilingStars);
+
+  const makePanel = (x: number, z: number, rotationY: number, labelColor: string) => {
+    const panelGroup = new THREE.Group();
+    setPosition(panelGroup, x, 1.95, z);
+    panelGroup.rotation.y = rotationY;
+    const frame = new THREE.Mesh(
+      boxGeometry(1.55, 1.1, 0.08),
+      new THREE.MeshStandardMaterial({ color: "#09141b", roughness: 0.42, metalness: 0.38 }),
+    );
+    const screen = collidable(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(1.35, 0.9),
+        new THREE.MeshBasicMaterial({ color: labelColor, transparent: true, opacity: 0.42 }),
+      ),
+      false,
+    );
+    screen.position.z = 0.047;
+    const topBar = collidable(
+      new THREE.Mesh(
+        boxGeometry(1.18, 0.035, 0.014),
+        new THREE.MeshBasicMaterial({ color: "#fff1a8", transparent: true, opacity: 0.68 }),
+      ),
+      false,
+    );
+    setPosition(topBar, -0.02, 0.36, 0.062);
+    const sideMeter = collidable(
+      new THREE.Mesh(
+        boxGeometry(0.035, 0.66, 0.014),
+        new THREE.MeshBasicMaterial({ color: "#7dffd4", transparent: true, opacity: 0.54 }),
+      ),
+      false,
+    );
+    setPosition(sideMeter, -0.56, -0.02, 0.063);
+    panelGroup.add(frame, screen, topBar, sideMeter);
+    for (let i = 0; i < 4; i += 1) {
+      const line = collidable(
+        new THREE.Mesh(
+          boxGeometry(0.92 - i * 0.12, 0.025, 0.012),
+          new THREE.MeshBasicMaterial({ color: "#d9fbff", transparent: true, opacity: 0.58 }),
+        ),
+        false,
+      );
+      setPosition(line, 0.05, 0.26 - i * 0.16, 0.06);
+      panelGroup.add(line);
+    }
+    root.add(panelGroup);
+  };
+  makePanel(-2.8, -4.88, 0, "#2acbff");
+  makePanel(2.8, -4.88, 0, "#79ffa8");
+  makePanel(-4.88, -0.6, Math.PI / 2, "#b28dff");
+  makePanel(4.88, -0.6, -Math.PI / 2, "#ffc56f");
+
+  const projectionMaterial = new THREE.MeshBasicMaterial({
+    color: "#7cecff",
+    transparent: true,
+    opacity: 0.22,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const rearProjectionOuter = collidable(new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.01, 8, 128), projectionMaterial), false);
+  const rearProjectionInner = collidable(new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.007, 8, 96), projectionMaterial.clone()), false);
+  setPosition(rearProjectionOuter, 0, 2.44, -4.86);
+  setPosition(rearProjectionInner, 0, 2.44, -4.855);
+  const projectionHorizon = collidable(new THREE.Mesh(boxGeometry(2.25, 0.012, 0.012), projectionMaterial.clone()), false);
+  const projectionMeridian = collidable(new THREE.Mesh(boxGeometry(0.012, 1.55, 0.012), projectionMaterial.clone()), false);
+  setPosition(projectionHorizon, 0, 2.44, -4.845);
+  setPosition(projectionMeridian, 0, 2.44, -4.84);
+  root.add(rearProjectionOuter, rearProjectionInner, projectionHorizon, projectionMeridian);
+
+  const ribMaterial = new THREE.MeshStandardMaterial({
+    color: "#324956",
+    roughness: 0.46,
+    metalness: 0.44,
+  });
+  const ribPositions = [-3.6, -1.8, 0, 1.8, 3.6];
+  for (const x of ribPositions) {
+    const leftPost = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 4.05, 12), ribMaterial);
+    const rightPost = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 4.05, 12), ribMaterial);
+    setPosition(leftPost, x, 2.02, -4.84);
+    setPosition(rightPost, x, 2.02, 4.84);
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(5, 0.035, 8, 96, Math.PI), ribMaterial);
+    setPosition(arch, x, 4.02, 0);
+    arch.rotation.z = Math.PI / 2;
+    setScale(arch, 0.42, 1, 1);
+    root.add(leftPost, rightPost, arch);
+  }
+
+  const chairSeatMaterial = new THREE.MeshStandardMaterial({
+    color: "#273847",
+    roughness: 0.86,
+    metalness: 0.03,
+  });
+  const chairTrimMaterial = new THREE.MeshStandardMaterial({
+    color: "#c9a95f",
+    roughness: 0.34,
+    metalness: 0.62,
+  });
+  const makeLoungeChair = (x: number, z: number, rotationY: number) => {
+    const chair = new THREE.Group();
+    setPosition(chair, x, 0, z);
+    chair.rotation.y = rotationY;
+    const seat = new THREE.Mesh(boxGeometry(1.05, 0.18, 0.9), chairSeatMaterial);
+    seat.position.y = 0.48;
+    seat.castShadow = true;
+    const back = new THREE.Mesh(boxGeometry(1.05, 0.85, 0.18), chairSeatMaterial);
+    setPosition(back, 0, 0.86, -0.43);
+    back.rotation.x = -0.28;
+    back.castShadow = true;
+    const lumbar = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.28, 18, 12), chairSeatMaterial), false);
+    setPosition(lumbar, 0, 0.74, -0.32);
+    setScale(lumbar, 1.65, 0.34, 0.22);
+    const headrest = collidable(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.88, 16), chairSeatMaterial), false);
+    setPosition(headrest, 0, 1.24, -0.58);
+    headrest.rotation.z = Math.PI / 2;
+    const leftArm = new THREE.Mesh(boxGeometry(0.14, 0.44, 0.92), chairTrimMaterial);
+    const rightArm = new THREE.Mesh(boxGeometry(0.14, 0.44, 0.92), chairTrimMaterial);
+    setPosition(leftArm, -0.6, 0.62, 0);
+    setPosition(rightArm, 0.6, 0.62, 0);
+    const frontLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 10), chairTrimMaterial);
+    const rearLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 10), chairTrimMaterial);
+    setPosition(frontLeg, -0.42, 0.24, 0.36);
+    setPosition(rearLeg, 0.42, 0.24, -0.36);
+    const frontRail = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.86, 10), chairTrimMaterial);
+    setPosition(frontRail, 0, 0.32, 0.43);
+    frontRail.rotation.z = Math.PI / 2;
+    const rearRail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.86, 10), chairTrimMaterial);
+    setPosition(rearRail, 0, 0.33, -0.42);
+    rearRail.rotation.z = Math.PI / 2;
+    chair.add(seat, back, lumbar, headrest, leftArm, rightArm, frontLeg, rearLeg, frontRail, rearRail);
+    root.add(chair);
+  };
+  makeLoungeChair(-3.15, 2.4, Math.PI * 0.22);
+  makeLoungeChair(3.15, 2.4, -Math.PI * 0.22);
+  makeLoungeChair(-3.25, -2.5, Math.PI * 0.75);
+  makeLoungeChair(3.25, -2.5, -Math.PI * 0.75);
+
+  const planterMaterial = new THREE.MeshStandardMaterial({
+    color: "#23313b",
+    roughness: 0.52,
+    metalness: 0.36,
+  });
+  const leafMaterial = new THREE.MeshStandardMaterial({
+    color: "#59b67e",
+    roughness: 0.72,
+    metalness: 0.02,
+    emissive: "#102b1d",
+    emissiveIntensity: 0.12,
+  });
+  const makePlanter = (x: number, z: number) => {
+    const planter = new THREE.Group();
+    setPosition(planter, x, 0, z);
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.46, 0.7, 24), planterMaterial);
+    pot.position.y = 0.35;
+    pot.castShadow = true;
+    planter.add(pot);
+    const soil = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.34, 0.34, 0.035, 24),
+      new THREE.MeshStandardMaterial({ color: "#101413", roughness: 1, metalness: 0 }),
+    );
+    soil.position.y = 0.72;
+    planter.add(soil);
+    for (let i = 0; i < 7; i += 1) {
+      const stem = collidable(
+        new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.55, 8), leafMaterial),
+        false,
+      );
+      const angle = (i * Math.PI * 2) / 7;
+      setPosition(stem, Math.cos(angle) * 0.11, 0.96, Math.sin(angle) * 0.11);
+      stem.rotation.set(0.22, 0, -Math.cos(angle) * 0.28);
+      const leaf = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), leafMaterial), false);
+      setPosition(leaf, Math.cos(angle) * 0.2, 0.78 + (i % 3) * 0.12, Math.sin(angle) * 0.2);
+      setScale(leaf, 0.65, 1.7, 0.28);
+      leaf.rotation.set(0.35, angle, -0.28 + i * 0.04);
+      planter.add(stem, leaf);
+    }
+    root.add(planter);
+  };
+  makePlanter(-4.25, -4.2);
+  makePlanter(4.25, -4.2);
+  makePlanter(-4.2, 4.05);
+  makePlanter(4.2, 4.05);
+
+  const plinthMaterial = new THREE.MeshStandardMaterial({
+    color: "#d6d1c0",
+    roughness: 0.7,
+    metalness: 0.08,
+  });
+  const specimenMaterial = new THREE.MeshStandardMaterial({
+    color: "#f2c974",
+    roughness: 0.32,
+    metalness: 0.46,
+    emissive: "#72502a",
+    emissiveIntensity: 0.12,
+  });
+  const plinthPositions: Array<[number, number]> = [
+    [-4.05, 0.95],
+    [4.05, 0.95],
+  ];
+  for (const [x, z] of plinthPositions) {
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.86, 8), plinthMaterial);
+    setPosition(plinth, x, 0.43, z);
+    const specimen = collidable(new THREE.Mesh(new THREE.OctahedronGeometry(0.28), specimenMaterial), false);
+    setPosition(specimen, x, 1.12, z);
+    specimen.rotation.y = Math.PI / 4;
+    root.add(plinth, specimen);
+  }
+
+  const pendantMaterial = new THREE.MeshStandardMaterial({
+    color: "#e9fbff",
+    roughness: 0.2,
+    metalness: 0.06,
+    emissive: "#8cdcff",
+    emissiveIntensity: 1.2,
+  });
+  const pendantPositions: Array<[number, number]> = [
+    [-2.6, 0],
+    [2.6, 0],
+    [0, -3.05],
+  ];
+  for (const [x, z] of pendantPositions) {
+    const cable = collidable(
+      new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.74, 8), new THREE.MeshBasicMaterial({ color: "#9aaeb3" })),
+      false,
+    );
+    setPosition(cable, x, 3.73, z);
+    const pendant = collidable(new THREE.Mesh(new THREE.SphereGeometry(0.17, 24, 12), pendantMaterial), false);
+    setPosition(pendant, x, 3.34, z);
+    const pendantHalo = collidable(
+      new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: starTexture,
+          color: "#c7f5ff",
+          transparent: true,
+          opacity: 0.28,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      ),
+      false,
+    );
+    setPosition(pendantHalo, x, 3.34, z);
+    setScale(pendantHalo, 0.82, 0.82, 0.82);
+    root.add(cable, pendant, pendantHalo);
+    const lamp = new THREE.PointLight("#bfefff", 0.45, 4.2, 2);
+    setPosition(lamp, x, 3.2, z);
+    collidable(lamp, false);
+    root.add(lamp);
+  }
+
+  const ambient = new THREE.HemisphereLight("#d8f8ff", "#16242d", 0.8);
+  root.add(ambient);
+
+  const keyLight = new THREE.DirectionalLight("#eafcff", 1.0);
+  setPosition(keyLight, -3.2, 6.8, 4.1);
+  keyLight.castShadow = true;
+  root.add(keyLight);
+
+  const atlasLight = new THREE.PointLight("#37dfff", 1.4, 5.6, 2.0);
+  setPosition(atlasLight, 0, 2.28, 0);
+  collidable(atlasLight, false);
+  root.add(atlasLight);
+
+  const softSpot = new THREE.SpotLight("#b9efff", 1.1, 8, 0.55, 0.72, 1.2);
+  setPosition(softSpot, 0, 4.0, 3.4);
+  softSpot.castShadow = true;
+  const softSpotTarget = new THREE.Object3D();
+  setPosition(softSpotTarget, 0, 1.2, 0);
+  root.add(softSpotTarget);
+  softSpot.target = softSpotTarget;
+  root.add(softSpot);
+
+  const trofferFrameMaterial = new THREE.MeshStandardMaterial({
+    color: "#1d3540",
+    roughness: 0.44,
+    metalness: 0.46,
+  });
+  const trofferDiffuserMaterial = new THREE.MeshStandardMaterial({
+    color: "#d5f8ff",
+    roughness: 0.18,
+    metalness: 0.02,
+    emissive: "#bfefff",
+    emissiveIntensity: 0.74,
+  });
+  const trofferGlowMaterial = new THREE.MeshBasicMaterial({
+    color: "#d5f8ff",
+    transparent: true,
+    opacity: 0.16,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const trofferFrame = collidable(new THREE.Mesh(boxGeometry(2.42, 0.035, 0.46), trofferFrameMaterial), false);
+  const trofferDiffuser = collidable(new THREE.Mesh(boxGeometry(2.2, 0.02, 0.25), trofferDiffuserMaterial), false);
+  const trofferGlow = collidable(new THREE.Mesh(boxGeometry(2.7, 0.012, 0.62), trofferGlowMaterial), false);
+  setPosition(trofferFrame, 0, 4.035, -2.8);
+  setPosition(trofferDiffuser, 0, 4.012, -2.8);
+  setPosition(trofferGlow, 0, 3.996, -2.8);
+  root.add(trofferFrame, trofferDiffuser, trofferGlow);
+
+  const animatedMaterials = {
+    orbMaterial,
+    waterMaterial,
+    rippleInnerMaterial,
+    rippleOuterMaterial,
+    auroraGreenMaterial,
+    auroraBlueMaterial,
+    auroraAmberMaterial,
+    pendantMaterial,
+    projectionMaterial,
+  };
+  root.userData.isAnimated = true;
+  root.userData.update = ({ time }: { time: number }) => {
+    const t = finite(time, 0) * 0.001;
+    atlasLines.rotation.y = t * 0.35;
+    atlasConstellation.rotation.y = -t * 0.12;
+    atlasConstellation.rotation.x = Math.sin(t * 0.34) * 0.08;
+    ringA.rotation.z = t * 0.22;
+    ringB.rotation.y = Math.PI / 5 + t * 0.18;
+    ringC.rotation.x = Math.PI / 1.9 + Math.sin(t * 0.6) * 0.08;
+    orb.rotation.y = t * 0.18;
+    water.rotation.y = -t * 0.12;
+    setScaleScalar(water, 1 + Math.sin(t * 1.2) * 0.018);
+    setScaleScalar(rippleInner, 1 + Math.sin(t * 1.1) * 0.05);
+    setScaleScalar(rippleOuter, 1 + Math.sin(t * 0.9 + 1.2) * 0.035);
+    const pulse = 0.5 + Math.sin(t * 1.4) * 0.5;
+    animatedMaterials.orbMaterial.emissiveIntensity = 1.25 + pulse * 0.7;
+    animatedMaterials.waterMaterial.emissiveIntensity = 0.18 + pulse * 0.12;
+    animatedMaterials.rippleInnerMaterial.opacity = 0.18 + pulse * 0.18;
+    animatedMaterials.rippleOuterMaterial.opacity = 0.12 + (1 - pulse) * 0.14;
+    animatedMaterials.pendantMaterial.emissiveIntensity = 1.05 + pulse * 0.25;
+    animatedMaterials.projectionMaterial.opacity = 0.18 + pulse * 0.08;
+    animatedMaterials.auroraGreenMaterial.opacity = 0.3 + Math.sin(t * 0.8) * 0.05;
+    animatedMaterials.auroraBlueMaterial.opacity = 0.23 + Math.sin(t * 0.65 + 1.7) * 0.04;
+    animatedMaterials.auroraAmberMaterial.opacity = 0.16 + Math.sin(t * 0.55 + 3.1) * 0.03;
+    auroraGroup.position.y = Math.sin(t * 0.45) * 0.035;
+    atlasLight.intensity = 1.15 + pulse * 0.45;
+  };
+}

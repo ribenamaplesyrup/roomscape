@@ -249,7 +249,7 @@ function renderWorkspace() {
           <select id="room-loader" aria-label="Load saved room">
             ${renderRoomOptions()}
           </select>
-          <button id="delete-room" class="quiet-button icon-button danger-button" type="button" aria-label="Delete selected saved room" title="Delete selected saved room" ${state.selectedRoomId ? "" : "disabled"}>
+          <button id="delete-room" class="quiet-button icon-button danger-button" type="button" aria-label="Delete selected saved room" title="Delete selected saved room" ${canDeleteSelectedRoom() ? "" : "disabled"}>
             ${trashIcon()}
           </button>
         </div>
@@ -582,6 +582,11 @@ async function deleteSelectedRoom() {
   const roomId = state.selectedRoomId;
   const room = roomId ? state.rooms.find((candidate) => candidate.id === roomId) : undefined;
   if (!room) return;
+  if (room.userId === "__featured__") {
+    pushLog(`Featured room "${room.name}" cannot be deleted.`);
+    updateTelemetry();
+    return;
+  }
   if (!window.confirm(`Delete saved room "${room.name}"? The current room will stay open.`)) return;
   await api(`/api/rooms/${encodeURIComponent(room.id)}`, { method: "DELETE" });
   state.selectedRoomId = null;
@@ -594,7 +599,12 @@ async function deleteSelectedRoom() {
 function updateDeleteRoomButton() {
   const button = document.querySelector<HTMLButtonElement>("#delete-room");
   if (!button) return;
-  button.disabled = !state.selectedRoomId;
+  button.disabled = !canDeleteSelectedRoom();
+}
+
+function canDeleteSelectedRoom(): boolean {
+  const room = state.selectedRoomId ? state.rooms.find((candidate) => candidate.id === state.selectedRoomId) : undefined;
+  return Boolean(room && room.userId !== "__featured__");
 }
 
 function trashIcon(): string {

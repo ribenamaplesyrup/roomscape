@@ -173,6 +173,7 @@ describe("ChatGPT auth HTTP flow", () => {
     const sceneModule = await request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, secondCookie);
 
     expect(activeAfterLogin.body.config).toMatchObject({ name: "Bare Room", objects: [] });
+    expect(rooms.body.rooms.map((room) => room.name)).toContain("Aurora Atlas Lounge");
     expect(rooms.body.rooms.map((room) => room.name)).toContain("Remembered study");
     expect(sceneModule.body.source).toContain("Bare Room");
   });
@@ -267,7 +268,10 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(second.body.room.id).toBe(first.body.room.id);
     expect(second.body.room.config.name).toBe("saved   SCENE");
     expect(second.body.room.sceneSource).toContain("Updated saved scene");
-    expect(rooms.body.rooms.map((room) => ({ id: room.id, name: room.name }))).toEqual([{ id: first.body.room.id, name: "saved   SCENE" }]);
+    expect(rooms.body.rooms.map((room) => ({ id: room.id, name: room.name }))).toEqual([
+      { id: "featured-aurora-atlas-lounge", name: "Aurora Atlas Lounge" },
+      { id: first.body.room.id, name: "saved   SCENE" },
+    ]);
   });
 
   it("deletes saved rooms without allowing another user to delete them", async () => {
@@ -294,7 +298,42 @@ describe("ChatGPT auth HTTP flow", () => {
     const deleted = await request<{ ok: boolean }>(handler, "DELETE", `/api/rooms/${saved.body.room.id}`, undefined, userACookie);
     expect(deleted.body.ok).toBe(true);
     const rooms = await request<{ rooms: Array<{ id: string }> }>(handler, "GET", "/api/rooms", undefined, userACookie);
-    expect(rooms.body.rooms).toEqual([]);
+    expect(rooms.body.rooms).toEqual([expect.objectContaining({ id: "featured-aurora-atlas-lounge" })]);
+  });
+
+  it("lists and loads the featured Aurora Atlas Lounge for every user", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-featured-room-"));
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+
+    codex.account = { accountId: "acct-featured", email: "featured@example.com" };
+    const login = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const cookie = login.headers["set-cookie"]!;
+    const rooms = await request<{ rooms: Array<{ id: string; name: string; userId: string }> }>(handler, "GET", "/api/rooms", undefined, cookie);
+
+    expect(rooms.body.rooms[0]).toMatchObject({
+      id: "featured-aurora-atlas-lounge",
+      userId: "__featured__",
+      name: "Aurora Atlas Lounge",
+    });
+
+    const loaded = await request<{ room: { id: string; config: { name: string }; sceneSource: string } }>(
+      handler,
+      "GET",
+      "/api/rooms/featured-aurora-atlas-lounge",
+      undefined,
+      cookie,
+    );
+
+    expect(loaded.body.room.config.name).toBe("Aurora Atlas Lounge");
+    expect(loaded.body.room.sceneSource).toContain("export const roomTitle = \"Aurora Atlas Lounge\"");
+    await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("Aurora Atlas Lounge");
   });
 
   it("forgets the remembered ChatGPT device on sign-out so fresh login can replace stale Codex tokens", async () => {

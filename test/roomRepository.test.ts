@@ -47,4 +47,17 @@ describe("room repository", () => {
     await expect(repo.delete("user-a", room.id)).resolves.toBe(true);
     expect(await repo.get("user-a", room.id)).toBeNull();
   });
+
+  it("can include featured rooms without making them user-owned", async () => {
+    const repo = new RoomRepository(new MemoryStore(), true);
+
+    const rooms = await repo.listForUser("user-a");
+    expect(rooms.map((room) => room.name)).toContain("Aurora Atlas Lounge");
+
+    const featured = rooms.find((room) => room.id === "featured-aurora-atlas-lounge");
+    expect(featured).toMatchObject({ userId: "__featured__", name: "Aurora Atlas Lounge" });
+    expect(featured?.sceneSource).toContain("export const roomTitle = \"Aurora Atlas Lounge\"");
+    await expect(repo.get("other-user", "featured-aurora-atlas-lounge")).resolves.toMatchObject({ name: "Aurora Atlas Lounge" });
+    await expect(repo.delete("user-a", "featured-aurora-atlas-lounge")).resolves.toBe(false);
+  });
 });

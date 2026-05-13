@@ -2,14 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { SavedRoom } from "../../shared/api";
 import type { RoomConfig } from "../../shared/room";
 import type { DataStore, RoomRecord } from "./types";
+import { featuredRoomIds, featuredRooms } from "./featuredRooms";
 
 export class RoomRepository {
-  public constructor(private readonly store: DataStore) {}
+  public constructor(
+    private readonly store: DataStore,
+    private readonly includeFeaturedRooms = false,
+  ) {}
 
-  /** Lists only the rooms owned by the authenticated user. */
+  /** Lists rooms available to the authenticated user, including featured rooms when enabled. */
   public async listForUser(userId: string): Promise<SavedRoom[]> {
     const data = await this.store.read();
-    return data.rooms.filter((room) => room.userId === userId).map(toSavedRoom);
+    const userRooms = data.rooms.filter((room) => room.userId === userId).map(toSavedRoom);
+    if (!this.includeFeaturedRooms) return userRooms;
+    return [...await featuredRooms(), ...userRooms];
   }
 
   /** Saves a room snapshot for the user who owns the current session. */
@@ -41,15 +47,18 @@ export class RoomRepository {
     return toSavedRoom(room);
   }
 
-  /** Returns a single room only if it belongs to the current user. */
+  /** Returns a single room if it belongs to the current user or is a featured room. */
   public async get(userId: string, roomId: string): Promise<SavedRoom | null> {
     const data = await this.store.read();
     const room = data.rooms.find((candidate) => candidate.id === roomId && candidate.userId === userId);
-    return room ? toSavedRoom(room) : null;
+    if (room) return toSavedRoom(room);
+    if (!this.includeFeaturedRooms) return null;
+    return (await featuredRooms()).find((candidate) => candidate.id === roomId) ?? null;
   }
 
   /** Deletes a saved room only when it belongs to the current user. */
   public async delete(userId: string, roomId: string): Promise<boolean> {
+    if (this.includeFeaturedRooms && featuredRoomIds().has(roomId)) return false;
     const data = await this.store.read();
     const existingCount = data.rooms.length;
     data.rooms = data.rooms.filter((candidate) => candidate.id !== roomId || candidate.userId !== userId);

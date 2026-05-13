@@ -43,7 +43,7 @@ const pendingLoginMaxAgeMs = 10 * 60 * 1000;
 
 export function createApp({ store, runner, runnerFactory, bus, roomCode, workspaceRoot, codex, vite, staticRoot }: AppDeps) {
   const auth = new AuthService(store);
-  const rooms = new RoomRepository(store);
+  const rooms = new RoomRepository(store, true);
   const activeRooms = new ActiveRoomRepository(store);
   const runStates = new Map<string, UserRunState>();
   const runOwners = new Map<string, string>();
