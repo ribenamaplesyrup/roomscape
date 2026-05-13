@@ -2,6 +2,16 @@
 
 Roomscape serves browser routes through Vite or static files and reserves `/api/*` for JSON and server-sent event routes.
 
+## Health
+
+### `GET /api/health`
+
+Returns:
+
+```json
+{ "ok": true }
+```
+
 ## Authentication
 
 ### `GET /api/session`
@@ -52,6 +62,22 @@ or:
 
 Clears the current session and cancels active room edits.
 
+### `POST /api/auth/chatgpt/existing`
+
+Attempts to reuse the remembered-device cookie first, then a local Codex ChatGPT account when the browser login flow is available.
+
+Returns either:
+
+```json
+{ "status": "pending" }
+```
+
+or:
+
+```json
+{ "status": "authenticated", "user": { "id": "user-id", "authMode": "chatgpt", "accountLabel": "ChatGPT account", "openAiAccountLabel": "ChatGPT account" } }
+```
+
 ## Usage
 
 ### `GET /api/usage`
@@ -86,15 +112,15 @@ Body:
 { "name": "Warm studio", "config": {} }
 ```
 
-The server uses the current active config when `config` is omitted and captures `activeRoomScene.ts` as the saved scene source.
+The server uses the stored active config when `config` is omitted and captures `activeRoomScene.ts` as the saved scene source.
 
 ### `GET /api/rooms/:id`
 
-Loads a saved room owned by the current user. The server writes the saved scene into the active sandbox, validates it, promotes it, and returns the saved room.
+Loads a saved room owned by the current user. The server writes the saved scene into the user's active generated-room workspace, validates it, promotes it, and returns the saved room.
 
 ### `GET /api/active-room`
 
-Returns the current in-memory active `RoomConfig`.
+Returns the current stored active `RoomConfig`.
 
 ### `GET /api/active-room/scene-module`
 
@@ -106,7 +132,7 @@ Returns the current validated active scene module transpiled to browser-importab
 
 ### `POST /api/active-room/reset`
 
-Cancels active room edits, resets the in-memory config, writes a fresh starter scene, and returns the fresh config.
+Cancels active room edits, resets the stored active config, writes a fresh starter scene, and returns the fresh config.
 
 ## Agent Runs
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateSandboxPath } from "../src/server/agent/sandboxPolicy";
 
 describe("sandbox path policy", () => {
-  it("allows files inside the active room sandbox", () => {
+  it("allows files inside the active generated-room workspace", () => {
     const decision = evaluateSandboxPath("/repo/src/client/rooms/active", "roomConfig.ts", "write config");
     expect(decision.allowed).toBe(true);
     expect(decision.permissionRequest).toBeUndefined();

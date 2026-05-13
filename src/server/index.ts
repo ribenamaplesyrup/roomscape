@@ -3,12 +3,13 @@ import path from "node:path";
 import { createServer as createViteServer } from "vite";
 import { AgentRunBus } from "./agent/architectRunner";
 import { CodexSdkArchitectRunner } from "./agent/codexArchitectRunner";
+import { roomscapeWorkspaceRoot } from "./config/paths";
 import { CodexUserAuthCoordinator, chatGptLoginFlow, roomscapeCodexAuthRoot } from "./codex/userAuthCoordinator";
-import { createApp, roomscapeWorkspaceRoot } from "./http/app";
+import { createApp } from "./http/app";
 import { createDataStore } from "./storage/createDataStore";
 
 const port = Number(process.env.PORT ?? 8787);
-const host = process.env.HOST ?? "0.0.0.0";
+const host = process.env.HOST ?? "127.0.0.1";
 const hmrPort = Number(process.env.VITE_HMR_PORT ?? port + 10_000);
 const cwd = process.cwd();
 const vite = process.env.NODE_ENV === "production"

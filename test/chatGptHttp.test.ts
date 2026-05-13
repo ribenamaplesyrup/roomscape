@@ -6,7 +6,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AgentRunBus, type ArchitectRunInput, type ArchitectRunner } from "../src/server/agent/architectRunner";
 import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
-import { createApp, roomscapeDataPath } from "../src/server/http/app";
+import { roomscapeDataPath, roomscapeWorkspaceRoot } from "../src/server/config/paths";
+import { createApp } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
 import type { DataStore, UserRecord } from "../src/server/storage/types";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
@@ -77,6 +78,9 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_PATH: "/data/roomscape.json" })).toBe("/data/roomscape.json");
     expect(roomscapeDataPath("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "data.json"));
     expect(roomscapeDataPath("/app", {})).toBe(path.join("/app", ".roomscape", "data.json"));
+    expect(roomscapeWorkspaceRoot("/app", { ROOMSCAPE_WORKSPACE_DIR: "/workspaces" })).toBe("/workspaces");
+    expect(roomscapeWorkspaceRoot("/app", { ROOMSCAPE_DATA_DIR: "/data" })).toBe(path.join("/data", "workspaces"));
+    expect(roomscapeWorkspaceRoot("/app", {})).toBe(path.join("/app", ".roomscape", "workspaces"));
   });
 
   it("scopes active generated scene source and workspaces to the authenticated OpenAI account", async () => {

@@ -1,12 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
-import type { RoomConfig, RoomObject, RoomObjectKind, SurfaceMaterial, SurfaceTexture } from "../../shared/room";
+import type { RoomConfig } from "../../shared/room";
 import { evaluateSandboxPath } from "./sandboxPolicy";
 
 export class SandboxViolationError extends Error {
   public constructor(public readonly request: NonNullable<ReturnType<typeof evaluateSandboxPath>["permissionRequest"]>) {
-    super("Agent attempted to access a path outside the active room sandbox.");
+    super("Agent attempted to access a path outside the active generated-room workspace.");
   }
 }
 
@@ -70,11 +70,6 @@ export class RoomCodeRepository {
     return this.readTextFile(this.activeSceneFile, "Read active Three.js room scene.");
   }
 
-  /** Reads the browser-facing scene module transpiled to importable JavaScript. */
-  public async readActiveSceneJavaScript(): Promise<string> {
-    return transpileSceneSource(await this.readRawActiveScene());
-  }
-
   /** Validates scene source before it can be promoted to the browser-facing module. */
   public validateSceneSource(source: string): string[] {
     const errors: string[] = [];
@@ -123,25 +118,6 @@ export class RoomCodeRepository {
     await mkdir(path.dirname(decision.normalizedPath), { recursive: true });
     await writeFile(decision.normalizedPath, source, "utf8");
     return decision.normalizedPath;
-  }
-
-  /** Reads the generated config module as text for audit and debugging surfaces. */
-  public async readRawConfig(): Promise<string> {
-    const decision = evaluateSandboxPath(this.sandboxRoot, this.configFile, "Read generated room configuration.");
-    if (!decision.allowed || !decision.normalizedPath) {
-      throw new SandboxViolationError(decision.permissionRequest!);
-    }
-    return readFile(decision.normalizedPath, "utf8");
-  }
-
-  /** Reads the generated TypeScript module back into the server's typed room config. */
-  public async readConfig(): Promise<RoomConfig> {
-    const raw = await this.readRawConfig();
-    const match = raw.match(/export\s+const\s+roomConfig\s*=\s*([\s\S]*?)\s+satisfies\s+RoomConfig\s*;/);
-    if (!match?.[1]) {
-      throw new Error("Active room config does not export a RoomConfig literal.");
-    }
-    return parseRoomConfigLiteral(match[1]);
   }
 
   /** Deliberately exposes policy checks for agent tools before touching disk. */
@@ -244,71 +220,4 @@ export function buildRoom({ THREE, root, scene }: RoomSceneContext): void {
   root.add(directional);
 }
 `;
-}
-
-function parseRoomConfigLiteral(value: string): RoomConfig {
-  const parsed = JSON.parse(value) as unknown;
-  if (!isRoomConfig(parsed)) {
-    throw new Error("Active room config is not a valid RoomConfig.");
-  }
-  return parsed;
-}
-
-function isRoomConfig(value: unknown): value is RoomConfig {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as RoomConfig;
-  return typeof candidate.name === "string"
-    && isPalette(candidate.palette)
-    && (candidate.materials === undefined || isMaterials(candidate.materials))
-    && Array.isArray(candidate.objects)
-    && candidate.objects.every(isRoomObject)
-    && typeof candidate.updatedAt === "string";
-}
-
-function isMaterials(value: unknown): value is NonNullable<RoomConfig["materials"]> {
-  if (!value || typeof value !== "object") return false;
-  const materials = value as NonNullable<RoomConfig["materials"]>;
-  return (materials.floor === undefined || isSurfaceMaterial(materials.floor))
-    && (materials.wall === undefined || isSurfaceMaterial(materials.wall))
-    && (materials.ceiling === undefined || isSurfaceMaterial(materials.ceiling));
-}
-
-function isSurfaceMaterial(value: unknown): value is SurfaceMaterial {
-  if (!value || typeof value !== "object") return false;
-  const material = value as SurfaceMaterial;
-  return isSurfaceTexture(material.texture)
-    && (material.color === undefined || typeof material.color === "string");
-}
-
-function isSurfaceTexture(value: unknown): value is SurfaceTexture {
-  return value === "plain" || value === "carpet" || value === "plaster" || value === "tile" || value === "concrete" || value === "wood";
-}
-
-function isPalette(value: unknown): value is RoomConfig["palette"] {
-  if (!value || typeof value !== "object") return false;
-  const palette = value as RoomConfig["palette"];
-  return typeof palette.wall === "string"
-    && typeof palette.floor === "string"
-    && typeof palette.ceiling === "string"
-    && typeof palette.accent === "string";
-}
-
-function isRoomObject(value: unknown): value is RoomObject {
-  if (!value || typeof value !== "object") return false;
-  const object = value as RoomObject;
-  return typeof object.id === "string"
-    && isRoomObjectKind(object.kind)
-    && typeof object.label === "string"
-    && typeof object.color === "string"
-    && isVector3(object.position)
-    && isVector3(object.scale)
-    && (object.intensity === undefined || typeof object.intensity === "number");
-}
-
-function isRoomObjectKind(value: unknown): value is RoomObjectKind {
-  return value === "cube" || value === "table" || value === "sofa" || value === "column" || value === "light";
-}
-
-function isVector3(value: unknown): value is [number, number, number] {
-  return Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === "number");
 }
