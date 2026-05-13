@@ -16,11 +16,22 @@ export class RoomRepository {
   public async save(userId: string, name: string, config: RoomConfig, sceneSource: string): Promise<SavedRoom> {
     const data = await this.store.read();
     const now = new Date().toISOString();
+    const roomName = name.trim() || config.name || "Untitled room";
+    const existingRoom = data.rooms.find((room) => room.userId === userId && roomNameKey(room.name) === roomNameKey(roomName));
+    if (existingRoom) {
+      existingRoom.name = roomName;
+      existingRoom.config = { ...config, name: roomName, updatedAt: now };
+      existingRoom.sceneSource = sceneSource;
+      existingRoom.updatedAt = now;
+      await this.store.write(data);
+      return toSavedRoom(existingRoom);
+    }
+
     const room: RoomRecord = {
       id: randomUUID(),
       userId,
-      name: name.trim() || config.name || "Untitled room",
-      config: { ...config, updatedAt: now },
+      name: roomName,
+      config: { ...config, name: roomName, updatedAt: now },
       sceneSource,
       createdAt: now,
       updatedAt: now,
@@ -40,4 +51,8 @@ export class RoomRepository {
 
 function toSavedRoom(room: RoomRecord): SavedRoom {
   return structuredClone(room);
+}
+
+function roomNameKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
