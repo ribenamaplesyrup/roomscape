@@ -12,7 +12,7 @@ import { CodexAppServerUnavailableError, type CodexAuthBridge } from "../codex/a
 import { ActiveRoomRepository } from "../storage/activeRoomRepository";
 import { RoomRepository } from "../storage/roomRepository";
 import type { DataStore } from "../storage/types";
-import { readCookie, setRememberedDeviceCookie, setSessionCookie, clearSessionCookie } from "./cookies";
+import { readCookie, setRememberedDeviceCookie, setSessionCookie, clearSessionCookie, clearRememberedDeviceCookie } from "./cookies";
 import { readJson, sendJson } from "./json";
 
 interface AppDeps {
@@ -80,10 +80,12 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
       const sessionId = readCookie(req, "roomscape_session");
+      const rememberToken = readCookie(req, "roomscape_device");
       const user = await auth.userForSession(sessionId);
       if (user) cancelUserRuns(user.id, "Signed out; cleared active room edits.");
-      await auth.logout(sessionId);
+      await auth.logout(sessionId, rememberToken);
       clearSessionCookie(res, { secure: isSecureRequest(req) });
+      clearRememberedDeviceCookie(res, { secure: isSecureRequest(req) });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -222,6 +224,9 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
                 if (runVersion !== runState.generation || controller.signal.aborted) return;
                 if (event.type === "room-updated") await activeRooms.saveConfig(user.id, event.config);
                 if (event.type === "scene-updated") await persistActiveScene(user.id, code);
+                if (event.type === "error" && isStaleCodexRefreshTokenError(event.message)) {
+                  await auth.invalidateCodexAuth(user.id);
+                }
                 bus.publish(runId, event);
               })
               .catch((error: unknown) => {
@@ -385,6 +390,11 @@ export function roomscapeWorkspaceRoot(cwd = process.cwd(), env = process.env): 
 
 function safePathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+function isStaleCodexRefreshTokenError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("refresh token") && normalized.includes("already used");
 }
 
 async function serveStatic(res: ServerResponse, url: URL, staticRoot: string): Promise<void> {

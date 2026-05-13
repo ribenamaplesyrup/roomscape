@@ -31,6 +31,11 @@ export function setRememberedDeviceCookie(res: ServerResponse, token: string, op
   appendCookie(res, `roomscape_device=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=7776000${secure}`);
 }
 
+export function clearRememberedDeviceCookie(res: ServerResponse, options: SessionCookieOptions = {}): void {
+  const secure = options.secure ? "; Secure" : "";
+  appendCookie(res, `roomscape_device=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+}
+
 function appendCookie(res: ServerResponse, cookie: string): void {
   const current = res.getHeader("Set-Cookie");
   if (!current) {

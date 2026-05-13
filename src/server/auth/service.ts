@@ -76,12 +76,34 @@ export class AuthService {
     return user ? toPublicUser(user) : null;
   }
 
-  /** Deletes a session without touching the user's rooms or credentials. */
-  public async logout(sessionId: string | undefined): Promise<void> {
-    if (!sessionId) return;
+  /** Deletes a session and forgets this browser's remembered ChatGPT device token. */
+  public async logout(sessionId: string | undefined, rememberToken: string | undefined): Promise<void> {
     const data = await this.store.read();
+    const session = sessionId ? data.sessions.find((candidate) => candidate.id === sessionId) : undefined;
     data.sessions = data.sessions.filter((session) => session.id !== sessionId);
+    this.clearRememberedDevice(data.users, rememberToken, session?.userId);
     await this.store.write(data);
+  }
+
+  /** Forces a fresh Codex/ChatGPT device login for a user after token refresh failures. */
+  public async invalidateCodexAuth(userId: string): Promise<void> {
+    const data = await this.store.read();
+    const user = data.users.find((candidate) => candidate.id === userId);
+    if (!user) return;
+    delete user.codexAuthRef;
+    delete user.rememberTokenHash;
+    user.updatedAt = new Date().toISOString();
+    await this.store.write(data);
+  }
+
+  private clearRememberedDevice(users: UserRecord[], rememberToken: string | undefined, userId: string | undefined): void {
+    if (!rememberToken && !userId) return;
+    const rememberTokenHash = rememberToken ? fingerprintCredential(`remember:${rememberToken}`) : undefined;
+    for (const user of users) {
+      if (user.id !== userId && user.rememberTokenHash !== rememberTokenHash) continue;
+      delete user.rememberTokenHash;
+      user.updatedAt = new Date().toISOString();
+    }
   }
 }
 

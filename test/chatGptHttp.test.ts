@@ -8,9 +8,10 @@ import { AgentRunBus, type ArchitectRunInput, type ArchitectRunner } from "../sr
 import { RoomCodeRepository } from "../src/server/agent/roomCodeRepository";
 import { createApp, roomscapeDataPath } from "../src/server/http/app";
 import { MemoryStore } from "../src/server/storage/memoryStore";
+import type { DataStore, UserRecord } from "../src/server/storage/types";
 import type { CodexAuthBridge, CodexChatGptAccount, CodexRateLimitsResult } from "../src/server/codex/appServerClient";
 import { chatGptLoginFlow, roomscapeCodexAuthRoot } from "../src/server/codex/userAuthCoordinator";
-import type { ChatGptLoginStart } from "../src/shared/api";
+import type { AgentEvent, ChatGptLoginStart } from "../src/shared/api";
 import { emptyRoomConfig } from "../src/shared/room";
 
 class FakeCodexBridge implements CodexAuthBridge {
@@ -188,7 +189,7 @@ describe("ChatGPT auth HTTP flow", () => {
     await expect(readFile(path.join(roomRoot, "activeRoomScene.ts"), "utf8")).resolves.toContain("export function buildRoom");
   });
 
-  it("can restore a signed-out browser session without requesting a fresh device code", async () => {
+  it("forgets the remembered ChatGPT device on sign-out so fresh login can replace stale Codex tokens", async () => {
     const codex = new FakeCodexBridge();
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-remembered-"));
     const handler = createApp({
@@ -206,10 +207,9 @@ describe("ChatGPT auth HTTP flow", () => {
     await request<{ ok: boolean }>(handler, "POST", "/api/auth/logout", undefined, cookies);
 
     codex.account = null;
-    const restored = await request<{ status: string; user: { authMode: string } }>(handler, "POST", "/api/auth/chatgpt/existing", undefined, cookies);
-    expect(restored.body.status).toBe("authenticated");
-    expect(restored.body.user.authMode).toBe("chatgpt");
-    expect(restored.headers["set-cookie"]).toContain("roomscape_session=");
+    const restored = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing", undefined, cookies);
+    expect(restored.body.status).toBe("pending");
+    expect(restored.headers["set-cookie"]).toBeUndefined();
   });
 
   it("returns device-code login details for hosted ChatGPT auth", async () => {
@@ -250,6 +250,29 @@ describe("ChatGPT auth HTTP flow", () => {
 
     const input = await runner.waitForRun();
     expect(input.codexHome).toBe("/auth/auth-a");
+  });
+
+  it("invalidates remembered Codex auth when a run reports a stale refresh token", async () => {
+    const codex = new FakeCodexBridge();
+    const store = new MemoryStore();
+    const runner = new StaleRefreshTokenRunner();
+    const handler = createApp({
+      store,
+      runner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(await mkdtemp(path.join(os.tmpdir(), "roomscape-http-stale-token-"))),
+      codex,
+    });
+
+    codex.account = { accountId: "acct-chatgpt", codexAuthRef: "auth-a", email: "designer@example.com" };
+    codex.completedLoginIds.add("login-1");
+    const completed = await request<{ status: string; user: { id: string } }>(handler, "POST", "/api/auth/chatgpt/complete", { loginId: "login-1" });
+    await request<{ runId: string }>(handler, "POST", "/api/agent/runs", { prompt: "Add a chair", model: "gpt-5.5" }, completed.headers["set-cookie"]);
+    await runner.waitForRunCount(1);
+
+    const user = await waitForUser(store, completed.body.user.id, (candidate) => !candidate.codexAuthRef && !candidate.rememberTokenHash);
+    expect(user.codexAuthRef).toBeUndefined();
+    expect(user.rememberTokenHash).toBeUndefined();
   });
 
   it("keeps active room config scoped to the authenticated user", async () => {
@@ -390,6 +413,33 @@ class RecordingRunner implements ArchitectRunner {
   }
 }
 
+class StaleRefreshTokenRunner implements ArchitectRunner {
+  private runCount = 0;
+  private waiters: Array<() => void> = [];
+
+  public async run(input: ArchitectRunInput, emit: (event: AgentEvent) => void): Promise<void> {
+    emit({
+      type: "error",
+      message: "Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.",
+      at: new Date().toISOString(),
+    });
+    emit({ type: "complete", runId: input.runId, at: new Date().toISOString() });
+    this.runCount += 1;
+    this.flushWaiters();
+  }
+
+  public async waitForRunCount(count: number): Promise<void> {
+    if (this.runCount >= count) return;
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    await this.waitForRunCount(count);
+  }
+
+  private flushWaiters(): void {
+    const waiters = this.waiters.splice(0);
+    for (const waiter of waiters) waiter();
+  }
+}
+
 class SceneWritingRunnerFactory {
   public readonly roots: string[] = [];
   private runCount = 0;
@@ -481,4 +531,15 @@ async function waitForScene(handler: AppHandler, cookie: string, expected: strin
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   return request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, cookie);
+}
+
+async function waitForUser(store: DataStore, userId: string, predicate: (user: UserRecord) => boolean): Promise<UserRecord> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const user = (await store.read()).users.find((candidate) => candidate.id === userId);
+    if (user && predicate(user)) return user;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const user = (await store.read()).users.find((candidate) => candidate.id === userId);
+  if (!user) throw new Error(`User ${userId} not found.`);
+  return user;
 }
