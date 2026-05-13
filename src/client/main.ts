@@ -3,14 +3,12 @@ import type { ActiveSceneModuleSource, AgentEvent, ChatGptAuthStatus, ChatGptLog
 import { modelOptions } from "../shared/models";
 import type { RoomConfig } from "../shared/room";
 import { roomConfig } from "../../sandbox/rooms/active/roomConfig";
-import * as activeRoomScene from "../../sandbox/rooms/active/activeRoomScene";
 import { RoomRenderer, type CameraPose } from "./room/RoomRenderer";
 import type { RoomSceneModule } from "./room/sceneTypes";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const sessionStateKey = "roomscape.session.v1";
 const initialStoredSession = loadStoredSession();
-const activeRoomSceneImporters = import.meta.glob("../../sandbox/rooms/active/activeRoomScene.ts");
 
 interface ClientState {
   user: PublicUser | null;
@@ -209,8 +207,7 @@ function renderWorkspace() {
           <button id="reset-room" class="quiet-button" type="button">Reset</button>
         </div>
         <select id="room-loader" aria-label="Load saved room">
-          <option value="">Load saved room</option>
-          ${state.rooms.map((room) => `<option value="${room.id}">${escapeHtml(room.name)}</option>`).join("")}
+          ${renderRoomOptions()}
         </select>
         <div class="telemetry">
           <div class="usage-row">
@@ -226,7 +223,7 @@ function renderWorkspace() {
   wireWorkspaceEvents();
   renderer?.dispose();
   renderer = new RoomRenderer(document.querySelector("#room-canvas")!);
-  applyActiveScene();
+  applySceneModule(fallbackRoomScene);
   renderer.start();
   void applyLatestActiveScene();
   restoreStoredPose();
@@ -242,10 +239,6 @@ function wireWorkspaceEvents() {
   document.querySelector<HTMLButtonElement>("#reset-room")!.addEventListener("click", resetRoom);
   document.querySelector<HTMLSelectElement>("#room-loader")!.addEventListener("change", loadRoomSelection);
   document.querySelector<HTMLButtonElement>("#logout")!.addEventListener("click", logout);
-}
-
-function applyActiveScene() {
-  applySceneModule(activeRoomScene);
 }
 
 function applySceneModule(module: RoomSceneModule) {
@@ -266,13 +259,10 @@ async function applyLatestActiveScene() {
       applySceneModule(runtimeModule);
       return;
     }
-    const importActiveRoomScene = activeRoomSceneImporters["../../sandbox/rooms/active/activeRoomScene.ts"];
-    if (!importActiveRoomScene) throw new Error("Active room scene importer is unavailable.");
-    const module = await importActiveRoomScene();
-    applySceneModule(module as unknown as RoomSceneModule);
+    applySceneModule(fallbackRoomScene);
   } catch (error) {
     pushLog(`ERROR: Unable to load active scene: ${error instanceof Error ? error.message : "Unknown scene load error."}`);
-    applyActiveScene();
+    applySceneModule(fallbackRoomScene);
     updateTelemetry();
   }
 }
@@ -487,7 +477,7 @@ async function saveRoom() {
   const name = document.querySelector<HTMLInputElement>("#room-name")!.value;
   await api("/api/rooms", { method: "POST", body: { name } });
   await loadRooms();
-  renderWorkspace();
+  updateRoomLoader();
 }
 
 async function resetRoom() {
@@ -510,6 +500,18 @@ async function resetRoom() {
 async function loadRooms() {
   const result = await api<{ rooms: SavedRoom[] }>("/api/rooms");
   state.rooms = result.rooms;
+}
+
+function updateRoomLoader() {
+  const loader = document.querySelector<HTMLSelectElement>("#room-loader");
+  if (loader) loader.innerHTML = renderRoomOptions();
+}
+
+function renderRoomOptions(): string {
+  return [
+    '<option value="">Load saved room</option>',
+    ...state.rooms.map((room) => `<option value="${room.id}">${escapeHtml(room.name)}</option>`),
+  ].join("");
 }
 
 async function loadRoomSelection(event: Event) {
@@ -788,12 +790,6 @@ if (import.meta.hot) {
     const pose = renderer?.pose();
     state.config = module.roomConfig;
     renderer?.applyConfig(module.roomConfig);
-    if (pose) renderer?.restorePose(pose);
-  });
-  import.meta.hot.accept("../../sandbox/rooms/active/activeRoomScene", (module) => {
-    if (!module?.buildRoom) return;
-    const pose = renderer?.pose();
-    renderer?.applyScene(module as unknown as RoomSceneModule);
     if (pose) renderer?.restorePose(pose);
   });
 }
