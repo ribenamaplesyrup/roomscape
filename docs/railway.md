@@ -29,29 +29,30 @@ Smoke checks:
 
 - `PORT`: injected by Railway.
 - `HOST`: optional; defaults to `0.0.0.0`.
-- `ROOMSCAPE_DATA_DIR`: optional directory for the JSON store, for example `/data` when a Railway volume is mounted there.
+- `ROOMSCAPE_DATA_DIR`: optional directory for JSON fallback data, Codex auth homes, and user workspaces.
 - `ROOMSCAPE_DATA_PATH`: optional full path to the JSON store. Takes precedence over `ROOMSCAPE_DATA_DIR`.
-- `DATABASE_URL`: reserved for the upcoming PostgreSQL-backed store. If this is set today, Roomscape fails on startup instead of silently using local JSON storage.
+- `DATABASE_URL`: enables the PostgreSQL-backed store. On Railway, attach a PostgreSQL service and reference its private connection URL.
+- `ROOMSCAPE_DATABASE_SSL`: optional PostgreSQL TLS mode. Use `require` for external endpoints that need TLS. Railway private Postgres URLs normally do not need this.
 
-Use `.env.example` as the local template for the interim volume-backed deployment.
+Use `.env.example` as the local template.
 
 ## Persistent Data
 
-The current branch still uses `JsonStore`. For a single instance, mount a Railway volume and set:
+Roomscape now supports a PostgreSQL `DataStore`. Production should use Railway PostgreSQL for users, sessions, saved rooms, and active room source. The checked-in `JsonStore` remains useful for local development and as the source for one-time migration from the existing Railway volume.
+
+Before switching a deployed service from JSON to Postgres, run the migration once with both the existing JSON volume variables and `DATABASE_URL` available:
 
 ```text
-ROOMSCAPE_DATA_DIR=/data
+npm run migrate:postgres
 ```
 
-The current Railway service has volume `roomscape-volume` attached to service `roomscape` at `/data`. This keeps `.roomscape/data.json`-style app data outside the container filesystem. This is acceptable for a small private deployment, but it is not the final shape for user-isolated hosted Roomscape. Do not attach Railway PostgreSQL yet unless the server has a PostgreSQL `DataStore`; the app intentionally fails when `DATABASE_URL` is present so it does not look multi-tenant while still writing JSON.
+Then set `DATABASE_URL` on the web service and redeploy. Keep `ROOMSCAPE_DATA_DIR=/data` for Codex auth homes and per-user workspaces even after the app data moves to Postgres.
+
+The current Railway service has volume `roomscape-volume` attached to service `roomscape` at `/data`. After migration, that volume still stores `ROOMSCAPE_CODEX_AUTH_DIR=/data/codex-auth` and `ROOMSCAPE_WORKSPACE_DIR=/data/workspaces`; the JSON file should be treated as a backup source rather than the live app database.
 
 ## User Isolation
 
 Saved rooms and active generated scene source are scoped by `userId` in the storage layer. Agent runs materialize that user's scene/config into a user-specific workspace under `ROOMSCAPE_WORKSPACE_DIR`, so one user's generated room scene is not served to another user.
-
-Production still needs one larger change before Roomscape should be considered durable multi-tenant infrastructure:
-
-1. Replace `JsonStore` with a database-backed store, preferably Railway PostgreSQL.
 
 The target production model should be:
 
@@ -61,12 +62,12 @@ The target production model should be:
 - `world_versions`: immutable scene/config snapshots.
 - `active_world_state`: current scene/config for one user and one world.
 
-Every room/world query should include the authenticated user's id, and every agent run should carry `userId`, `worldId`, and `runId`.
+The current PostgreSQL store already moves `users`, `sessions`, `rooms`, and `active_rooms` into tables while preserving the existing repository contract. The next data-model step is to introduce explicit world ids and immutable versions.
 
 ## Next Implementation Steps
 
-1. Deploy and test hosted ChatGPT device-code auth on Railway with a real ChatGPT account.
-2. Add a PostgreSQL `DataStore` and migration path for `users`, `sessions`, and `rooms`.
+1. Attach Railway PostgreSQL, run `npm run migrate:postgres`, and switch the web service to `DATABASE_URL`.
+2. Smoke test two ChatGPT accounts for isolated saved rooms and active rooms.
 3. Move from one active world per user to explicit world ids for editing, saving, and loading.
 
 ## ChatGPT Auth

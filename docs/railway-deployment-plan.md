@@ -60,27 +60,29 @@ Testable outcomes:
 - Pending: deploy the device-code flow to Railway and complete a real ChatGPT login from the public URL.
 - Pending: verify that User A and User B get distinct Roomscape user ids and isolated worlds on Railway.
 
-## 6. Introduce PostgreSQL Data Store
+## 6. Introduce PostgreSQL Data Store - Complete
 
 Replace JSON storage with a Railway PostgreSQL-backed store for users, sessions, rooms, and active room state.
 
 Testable outcomes:
 
-- `DATABASE_URL` enables the PostgreSQL store.
-- App starts successfully with Railway Postgres attached.
-- JSON store still works for local/dev fallback if kept.
-- Repository tests pass against memory and Postgres-backed stores.
-- Data survives redeploys.
+- Complete: `DATABASE_URL` enables the PostgreSQL store.
+- Complete: JSON store still works for local/dev fallback.
+- Complete: deployment config tests cover JSON/Postgres selection and Postgres SSL config.
+- Pending: app starts successfully with Railway Postgres attached.
+- Pending: data survives redeploys after switching production to Postgres.
 
-## 7. Add Migrations
+## 7. Add Migrations - In Progress
 
 Add a migration runner for schema creation and future changes.
 
 Testable outcomes:
 
-- Fresh Postgres database initializes automatically or via `npm run migrate`.
-- Re-running migrations is safe.
-- Tables exist for `users`, `sessions`, `rooms`, `active_rooms`, and later `world_versions`.
+- Complete: fresh Postgres database initializes automatically on first read/write.
+- Complete: `npm run migrate:postgres` copies the existing JSON snapshot into PostgreSQL.
+- Complete: schema creation is idempotent.
+- Complete: tables exist for `users`, `sessions`, `rooms`, and `active_rooms`.
+- Pending: add explicit versioned migration bookkeeping before adding `world_versions`.
 
 ## 8. Fully Isolate World State
 
