@@ -139,6 +139,39 @@ describe("ChatGPT auth HTTP flow", () => {
     expect(completed.headers["set-cookie"]).toContain("roomscape_session=");
   });
 
+  it("starts a fresh active room on ChatGPT login without deleting saved rooms", async () => {
+    const codex = new FakeCodexBridge();
+    const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-login-reset-"));
+    const handler = createApp({
+      store: new MemoryStore(),
+      runner: noopRunner,
+      bus: new AgentRunBus(),
+      roomCode: new RoomCodeRepository(roomRoot),
+      codex,
+    });
+
+    codex.account = { accountId: "acct-chatgpt", email: "designer@example.com" };
+    const firstLogin = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const firstCookie = firstLogin.headers["set-cookie"]!;
+    const savedConfig = { ...emptyRoomConfig, name: "Remembered study" };
+    const saved = await request<{ room: { id: string } }>(handler, "POST", "/api/rooms", { name: "Remembered study", config: savedConfig }, firstCookie);
+    await request<{ room: { config: { name: string } } }>(handler, "GET", `/api/rooms/${saved.body.room.id}`, undefined, firstCookie);
+    const activeBeforeLogout = await request<{ config: { name: string } }>(handler, "GET", "/api/active-room", undefined, firstCookie);
+    expect(activeBeforeLogout.body.config.name).toBe("Remembered study");
+
+    await request<{ ok: boolean }>(handler, "POST", "/api/auth/logout", undefined, firstCookie);
+    const secondLogin = await request<{ status: string }>(handler, "POST", "/api/auth/chatgpt/existing");
+    const secondCookie = secondLogin.headers["set-cookie"]!;
+
+    const activeAfterLogin = await request<{ config: { name: string; objects: unknown[] } }>(handler, "GET", "/api/active-room", undefined, secondCookie);
+    const rooms = await request<{ rooms: Array<{ name: string }> }>(handler, "GET", "/api/rooms", undefined, secondCookie);
+    const sceneModule = await request<{ source: string }>(handler, "GET", "/api/active-room/scene-module", undefined, secondCookie);
+
+    expect(activeAfterLogin.body.config).toMatchObject({ name: "Bare Room", objects: [] });
+    expect(rooms.body.rooms.map((room) => room.name)).toContain("Remembered study");
+    expect(sceneModule.body.source).toContain("Bare Room");
+  });
+
   it("starts Codex ChatGPT login, creates a session after completion, and exposes usage", async () => {
     const codex = new FakeCodexBridge();
     const roomRoot = await mkdtemp(path.join(os.tmpdir(), "roomscape-http-"));

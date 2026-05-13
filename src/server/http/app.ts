@@ -113,6 +113,7 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
         return;
       }
       const result = await auth.authenticateWithChatGpt(account);
+      await resetActiveRoomForUser(result.user.id, "Signed in; starting a fresh room.");
       setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
       setRememberedDeviceCookie(res, result.rememberToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
@@ -121,6 +122,7 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
     if (req.method === "POST" && url.pathname === "/api/auth/chatgpt/existing") {
       const remembered = await auth.authenticateWithRememberedDevice(readCookie(req, "roomscape_device"));
       if (remembered) {
+        await resetActiveRoomForUser(remembered.user.id, "Signed in; starting a fresh room.");
         setSessionCookie(res, remembered.sessionId, { secure: isSecureRequest(req) });
         sendJson(res, 200, { status: "authenticated", user: remembered.user });
         return;
@@ -132,6 +134,7 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
         return;
       }
       const result = await auth.authenticateWithChatGpt(account);
+      await resetActiveRoomForUser(result.user.id, "Signed in; starting a fresh room.");
       setSessionCookie(res, result.sessionId, { secure: isSecureRequest(req) });
       setRememberedDeviceCookie(res, result.rememberToken, { secure: isSecureRequest(req) });
       sendJson(res, 200, { status: "authenticated", user: result.user });
@@ -186,13 +189,7 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/active-room/reset") {
-      cancelUserRuns(user.id, "Room reset; cleared active room edits.");
-      const activeConfig = await activeRooms.saveConfig(user.id, freshRoomConfig());
-      const sceneSource = await activeRooms.saveSceneSource(user.id, freshSceneSource());
-      const code = await roomCodeForUser(user.id);
-      await code.writeConfig(activeConfig);
-      await code.writeSceneSource(sceneSource);
-      await code.writeActiveSceneSource(sceneSource);
+      const activeConfig = await resetActiveRoomForUser(user.id, "Room reset; cleared active room edits.");
       sendJson(res, 200, { config: activeConfig });
       return;
     }
@@ -327,6 +324,17 @@ export function createApp({ store, runner, runnerFactory, bus, roomCode, workspa
 
   async function persistActiveScene(userId: string, code: RoomCodeRepository): Promise<void> {
     await activeRooms.saveSceneSource(userId, await code.readRawActiveScene());
+  }
+
+  async function resetActiveRoomForUser(userId: string, reason: string): Promise<RoomConfig> {
+    cancelUserRuns(userId, reason);
+    const activeConfig = await activeRooms.saveConfig(userId, freshRoomConfig());
+    const sceneSource = await activeRooms.saveSceneSource(userId, freshSceneSource());
+    const code = await roomCodeForUser(userId);
+    await code.writeConfig(activeConfig);
+    await code.writeSceneSource(sceneSource);
+    await code.writeActiveSceneSource(sceneSource);
+    return activeConfig;
   }
 }
 
