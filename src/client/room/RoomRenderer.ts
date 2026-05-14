@@ -31,6 +31,9 @@ export class RoomRenderer {
   private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyDown(event);
   private readonly onKeyUp = (event: KeyboardEvent) => this.handleKeyUp(event);
   private readonly onMouseMove = (event: MouseEvent) => this.handleMouseMove(event);
+  private readonly onCanvasPointerDown = (event: PointerEvent) => this.handleCanvasPointerDown(event);
+  private readonly onCanvasPointerMove = (event: PointerEvent) => this.handleCanvasPointerMove(event);
+  private readonly onCanvasPointerUp = (event: PointerEvent) => this.handleCanvasPointerUp(event);
   private readonly onCanvasClick = () => requestPointerLockSafely(this.renderer.domElement);
   private yaw = 0;
   private pitch = 0;
@@ -39,6 +42,19 @@ export class RoomRenderer {
   private renderRequested = false;
   private running = false;
   private animatedScene = false;
+  private touchLookPointerId: number | null = null;
+  private touchLookLast: { x: number; y: number } | null = null;
+  private readonly virtualKeys = new Set<string>();
+  private readonly mobileControls = createMobileControls(
+    (key) => {
+      this.virtualKeys.add(key);
+      this.requestRender();
+    },
+    (key) => {
+      this.virtualKeys.delete(key);
+      this.requestRender();
+    },
+  );
 
   public constructor(private readonly mount: HTMLElement) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
@@ -48,6 +64,7 @@ export class RoomRenderer {
     this.renderer.shadowMap.enabled = false;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.mount.append(this.renderer.domElement);
+    this.mount.append(this.mobileControls);
     this.resetPose();
     this.scene.add(this.dynamicObjects);
     this.bindInput();
@@ -148,6 +165,10 @@ export class RoomRenderer {
     document.removeEventListener("keydown", this.onKeyDown);
     document.removeEventListener("keyup", this.onKeyUp);
     document.removeEventListener("mousemove", this.onMouseMove);
+    this.renderer.domElement.removeEventListener("pointerdown", this.onCanvasPointerDown);
+    this.renderer.domElement.removeEventListener("pointermove", this.onCanvasPointerMove);
+    this.renderer.domElement.removeEventListener("pointerup", this.onCanvasPointerUp);
+    this.renderer.domElement.removeEventListener("pointercancel", this.onCanvasPointerUp);
     this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
     window.removeEventListener("resize", this.onResize);
     disposeObject3D(this.dynamicObjects);
@@ -210,6 +231,10 @@ export class RoomRenderer {
 
   private bindInput(): void {
     this.renderer.domElement.addEventListener("click", this.onCanvasClick);
+    this.renderer.domElement.addEventListener("pointerdown", this.onCanvasPointerDown);
+    this.renderer.domElement.addEventListener("pointermove", this.onCanvasPointerMove);
+    this.renderer.domElement.addEventListener("pointerup", this.onCanvasPointerUp);
+    this.renderer.domElement.addEventListener("pointercancel", this.onCanvasPointerUp);
     document.addEventListener("keydown", this.onKeyDown);
     document.addEventListener("keyup", this.onKeyUp);
     document.addEventListener("mousemove", this.onMouseMove);
@@ -230,8 +255,38 @@ export class RoomRenderer {
 
   private handleMouseMove(event: MouseEvent): void {
     if (document.pointerLockElement !== this.renderer.domElement) return;
-    this.yaw -= event.movementX * 0.0024;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - event.movementY * 0.0024, -1.2, 1.2);
+    this.rotateCamera(event.movementX, event.movementY, 0.0024);
+  }
+
+  private handleCanvasPointerDown(event: PointerEvent): void {
+    if (event.pointerType === "mouse" || this.touchLookPointerId !== null) return;
+    event.preventDefault();
+    this.touchLookPointerId = event.pointerId;
+    this.touchLookLast = { x: event.clientX, y: event.clientY };
+    this.renderer.domElement.setPointerCapture(event.pointerId);
+  }
+
+  private handleCanvasPointerMove(event: PointerEvent): void {
+    if (event.pointerId !== this.touchLookPointerId || !this.touchLookLast) return;
+    event.preventDefault();
+    const movementX = event.clientX - this.touchLookLast.x;
+    const movementY = event.clientY - this.touchLookLast.y;
+    this.touchLookLast = { x: event.clientX, y: event.clientY };
+    this.rotateCamera(movementX, movementY, 0.0032);
+  }
+
+  private handleCanvasPointerUp(event: PointerEvent): void {
+    if (event.pointerId !== this.touchLookPointerId) return;
+    this.touchLookPointerId = null;
+    this.touchLookLast = null;
+    if (this.renderer.domElement.hasPointerCapture(event.pointerId)) {
+      this.renderer.domElement.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  private rotateCamera(movementX: number, movementY: number, sensitivity: number): void {
+    this.yaw -= movementX * sensitivity;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - movementY * sensitivity, -1.2, 1.2);
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     this.requestRender();
   }
@@ -240,10 +295,10 @@ export class RoomRenderer {
     const direction = new THREE.Vector3();
     const forward = horizontalCameraForward(this.camera);
     const right = new THREE.Vector3().crossVectors(forward, this.camera.up).normalize();
-    if (this.keys.has("ArrowUp")) direction.add(forward);
-    if (this.keys.has("ArrowDown")) direction.sub(forward);
-    if (this.keys.has("ArrowRight")) direction.add(right);
-    if (this.keys.has("ArrowLeft")) direction.sub(right);
+    if (this.isMovementActive("ArrowUp")) direction.add(forward);
+    if (this.isMovementActive("ArrowDown")) direction.sub(forward);
+    if (this.isMovementActive("ArrowRight")) direction.add(right);
+    if (this.isMovementActive("ArrowLeft")) direction.sub(right);
     if (direction.lengthSq() > 0) {
       direction.normalize().multiplyScalar(0.055);
       this.tryMove(direction);
@@ -323,7 +378,11 @@ export class RoomRenderer {
   }
 
   private hasMovementInput(): boolean {
-    return this.keys.has("ArrowUp") || this.keys.has("ArrowDown") || this.keys.has("ArrowRight") || this.keys.has("ArrowLeft");
+    return isMovementKeyActive(this.keys) || isMovementKeyActive(this.virtualKeys);
+  }
+
+  private isMovementActive(key: string): boolean {
+    return this.keys.has(key) || this.virtualKeys.has(key);
   }
 }
 
@@ -549,6 +608,65 @@ function horizontalCameraForward(camera: THREE.Camera): THREE.Vector3 {
 
 function isMovementKey(key: string): boolean {
   return key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
+}
+
+function isMovementKeyActive(keys: Set<string>): boolean {
+  return keys.has("ArrowUp") || keys.has("ArrowDown") || keys.has("ArrowRight") || keys.has("ArrowLeft");
+}
+
+function createMobileControls(onPress: (key: string) => void, onRelease: (key: string) => void): HTMLDivElement {
+  const controls = document.createElement("div");
+  controls.className = "mobile-room-controls";
+  controls.setAttribute("aria-label", "Room movement controls");
+  const buttons: Array<[string, string]> = [
+    ["ArrowUp", "Forward"],
+    ["ArrowLeft", "Left"],
+    ["ArrowRight", "Right"],
+    ["ArrowDown", "Back"],
+  ];
+  for (const [key, label] of buttons) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `mobile-move-button mobile-move-${movementClassName(key)}`;
+    button.setAttribute("aria-label", label);
+    button.textContent = movementGlyph(key);
+    bindMobileMoveButton(button, key, onPress, onRelease);
+    controls.append(button);
+  }
+  return controls;
+}
+
+function bindMobileMoveButton(
+  button: HTMLButtonElement,
+  key: string,
+  onPress: (key: string) => void,
+  onRelease: (key: string) => void,
+): void {
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    onPress(key);
+  });
+  for (const eventName of ["pointerup", "pointercancel", "pointerleave"] as const) {
+    button.addEventListener(eventName, (event) => {
+      if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId);
+      onRelease(key);
+    });
+  }
+}
+
+function movementGlyph(key: string): string {
+  if (key === "ArrowUp") return "↑";
+  if (key === "ArrowDown") return "↓";
+  if (key === "ArrowLeft") return "←";
+  return "→";
+}
+
+function movementClassName(key: string): string {
+  if (key === "ArrowUp") return "forward";
+  if (key === "ArrowDown") return "back";
+  if (key === "ArrowLeft") return "left";
+  return "right";
 }
 
 export function requestPointerLockSafely(element: HTMLElement): Promise<void> | undefined {

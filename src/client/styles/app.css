@@ -15,6 +15,7 @@ body {
   overflow: hidden;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
 }
 
 button,
@@ -427,10 +428,13 @@ button:focus-visible {
   inset: 0;
   min-width: 0;
   min-height: 100vh;
+  min-height: 100svh;
+  overflow: hidden;
 }
 
 .room-canvas canvas {
   display: block;
+  touch-action: none;
 }
 
 .overlay {
@@ -446,6 +450,20 @@ button:focus-visible {
   background: rgba(12, 16, 14, 0.88);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
   backdrop-filter: blur(18px);
+}
+
+.mobile-control-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-panel-summary {
+  display: none;
+}
+
+.control-panel-body {
+  display: grid;
+  gap: 12px;
 }
 
 .identity span {
@@ -575,6 +593,61 @@ textarea:disabled {
   color: rgba(189, 240, 211, 0.54);
 }
 
+.mobile-room-controls {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 2;
+  display: none;
+  grid-template-columns: repeat(3, 48px);
+  grid-template-rows: repeat(2, 48px);
+  gap: 8px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-move-button {
+  display: grid;
+  place-items: center;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  border-color: rgba(248, 245, 238, 0.24);
+  border-radius: 8px;
+  background: rgba(12, 16, 14, 0.74);
+  color: #f8f5ee;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.mobile-move-button:hover,
+.mobile-move-button:active {
+  border-color: rgba(214, 243, 111, 0.65);
+  background: rgba(214, 243, 111, 0.18);
+}
+
+.mobile-move-forward {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.mobile-move-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.mobile-move-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.mobile-move-back {
+  grid-column: 2;
+  grid-row: 2;
+}
+
 .log-activity {
   display: inline-flex;
   align-items: center;
@@ -692,16 +765,124 @@ textarea:disabled {
 
   .overlay {
     top: auto;
-    right: 10px;
-    left: 10px;
-    bottom: 10px;
+    right: max(10px, env(safe-area-inset-right));
+    left: max(10px, env(safe-area-inset-left));
+    bottom: max(10px, env(safe-area-inset-bottom));
     width: auto;
-    max-height: calc(100vh - 20px);
+    max-height: min(72svh, calc(100vh - 20px));
+    padding: 10px;
+    overflow: hidden;
+  }
+
+  .mobile-control-panel {
+    display: block;
+  }
+
+  .mobile-panel-summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #f8f5ee;
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 760;
+    list-style: none;
+  }
+
+  .mobile-panel-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-panel-summary::after {
+    width: 1.55rem;
+    height: 1.55rem;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid rgba(248, 245, 238, 0.18);
+    border-radius: 999px;
+    color: #d6f36f;
+    content: "⌄";
+  }
+
+  .mobile-control-panel[open] .mobile-panel-summary::after {
+    content: "⌃";
+  }
+
+  .mobile-panel-summary span {
+    color: #b9c4b6;
+  }
+
+  .control-panel-body {
+    max-height: calc(min(72svh, 100vh - 20px) - 64px);
     overflow: auto;
+    padding: 2px 2px 4px;
+    scrollbar-width: thin;
+  }
+
+  .identity {
+    align-items: start;
+  }
+
+  .prompt-form textarea {
+    min-height: 92px;
+  }
+
+  .actions {
+    grid-template-columns: minmax(0, 1fr) 72px 72px;
+  }
+
+  .actions button,
+  .prompt-actions button {
+    padding-inline: 10px;
+  }
+
+  .log-panel {
+    min-height: 112px;
+    max-height: 22svh;
   }
 
   .usage-row {
     grid-template-columns: 1fr auto;
   }
 
+  .mobile-room-controls {
+    display: grid;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 74px);
+  }
+
+}
+
+@media (max-width: 420px) {
+  .landing-shell {
+    padding-inline: 18px;
+  }
+
+  .landing-door-scene {
+    width: min(240px, calc(100vw - 36px));
+    height: 360px;
+  }
+
+  .landing-title h1 {
+    font-size: clamp(2.45rem, 13vw, 2.9rem);
+  }
+
+  .identity {
+    gap: 10px;
+  }
+
+  .identity .quiet-button {
+    min-width: 84px;
+    padding-inline: 10px;
+  }
+
+  .prompt-actions,
+  .actions {
+    grid-template-columns: 1fr;
+  }
+
+  .room-loader-row {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
 }

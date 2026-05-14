@@ -222,44 +222,52 @@ function renderWorkspace() {
   app.innerHTML = `
     <main class="workspace">
       <div id="room-canvas" class="room-canvas"></div>
-      <aside class="overlay">
-        <div class="identity">
-          <div>
-            <span>${escapeHtml(accountLabel())}</span>
+      <aside class="overlay" aria-label="Room controls">
+        <details class="mobile-control-panel" open>
+          <summary class="mobile-panel-summary">
+            <span>Controls</span>
             <strong>Roomscape</strong>
+          </summary>
+          <div class="control-panel-body">
+            <div class="identity">
+              <div>
+                <span>${escapeHtml(accountLabel())}</span>
+                <strong>Roomscape</strong>
+              </div>
+              <button id="logout" class="quiet-button" type="button">Sign out</button>
+            </div>
+            <form id="prompt-form" class="prompt-form">
+              <select id="model-select" name="model" ${state.isWorking ? "disabled" : ""}>
+                ${modelOptions.map((model) => `<option value="${model.id}" ${model.id === selectedModelId() ? "selected" : ""}>${model.label}</option>`).join("")}
+              </select>
+              <textarea id="prompt-input" name="prompt" rows="4" placeholder="Describe the exact room change." required ${state.isWorking ? "disabled" : ""}></textarea>
+              <div class="prompt-actions">
+                <button id="build-button" type="submit" ${state.isWorking ? "disabled" : ""}>Build</button>
+                <button id="cancel-edit" class="quiet-button danger-button" type="button" ${state.isWorking ? "" : "hidden"}>Cancel</button>
+              </div>
+            </form>
+            <div class="actions">
+              <input id="room-name" aria-label="Room name" value="${escapeHtml(state.config.name)}" />
+              <button id="save-room" type="button">Save</button>
+              <button id="reset-room" class="quiet-button" type="button">Reset</button>
+            </div>
+            <div class="room-loader-row">
+              <select id="room-loader" aria-label="Load saved room">
+                ${renderRoomOptions()}
+              </select>
+              <button id="delete-room" class="quiet-button icon-button danger-button" type="button" aria-label="Delete selected saved room" title="Delete selected saved room" ${canDeleteSelectedRoom() ? "" : "disabled"}>
+                ${trashIcon()}
+              </button>
+            </div>
+            <div class="telemetry">
+              <div class="usage-row">
+                <span>Session usage</span>
+                <strong id="usage">${escapeHtml(sessionUsageLabel())}</strong>
+              </div>
+              <div id="logs" class="log-panel" role="log" aria-live="polite">${renderLogContent()}</div>
+            </div>
           </div>
-          <button id="logout" class="quiet-button" type="button">Sign out</button>
-        </div>
-        <form id="prompt-form" class="prompt-form">
-          <select id="model-select" name="model" ${state.isWorking ? "disabled" : ""}>
-            ${modelOptions.map((model) => `<option value="${model.id}" ${model.id === selectedModelId() ? "selected" : ""}>${model.label}</option>`).join("")}
-          </select>
-          <textarea id="prompt-input" name="prompt" rows="4" placeholder="Describe the exact room change." required ${state.isWorking ? "disabled" : ""}></textarea>
-          <div class="prompt-actions">
-            <button id="build-button" type="submit" ${state.isWorking ? "disabled" : ""}>Build</button>
-            <button id="cancel-edit" class="quiet-button danger-button" type="button" ${state.isWorking ? "" : "hidden"}>Cancel</button>
-          </div>
-        </form>
-        <div class="actions">
-          <input id="room-name" aria-label="Room name" value="${escapeHtml(state.config.name)}" />
-          <button id="save-room" type="button">Save</button>
-          <button id="reset-room" class="quiet-button" type="button">Reset</button>
-        </div>
-        <div class="room-loader-row">
-          <select id="room-loader" aria-label="Load saved room">
-            ${renderRoomOptions()}
-          </select>
-          <button id="delete-room" class="quiet-button icon-button danger-button" type="button" aria-label="Delete selected saved room" title="Delete selected saved room" ${canDeleteSelectedRoom() ? "" : "disabled"}>
-            ${trashIcon()}
-          </button>
-        </div>
-        <div class="telemetry">
-          <div class="usage-row">
-            <span>Session usage</span>
-            <strong id="usage">${escapeHtml(sessionUsageLabel())}</strong>
-          </div>
-          <div id="logs" class="log-panel" role="log" aria-live="polite">${renderLogContent()}</div>
-        </div>
+        </details>
       </aside>
     </main>
   `;
