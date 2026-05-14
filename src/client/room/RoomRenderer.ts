@@ -629,7 +629,6 @@ function createMobileControls(onPress: (key: string) => void, onRelease: (key: s
     button.type = "button";
     button.className = `mobile-move-button mobile-move-${movementClassName(key)}`;
     button.setAttribute("aria-label", label);
-    button.textContent = movementGlyph(key);
     bindMobileMoveButton(button, key, onPress, onRelease);
     controls.append(button);
   }
@@ -653,13 +652,6 @@ function bindMobileMoveButton(
       onRelease(key);
     });
   }
-}
-
-function movementGlyph(key: string): string {
-  if (key === "ArrowUp") return "↑";
-  if (key === "ArrowDown") return "↓";
-  if (key === "ArrowLeft") return "←";
-  return "→";
 }
 
 function movementClassName(key: string): string {

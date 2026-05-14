@@ -604,6 +604,8 @@ textarea:disabled {
   gap: 8px;
   pointer-events: auto;
   touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .mobile-move-button {
@@ -618,8 +620,19 @@ textarea:disabled {
   color: #f8f5ee;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(14px);
-  font-size: 1.1rem;
   line-height: 1;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.mobile-move-button::before {
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  content: "";
 }
 
 .mobile-move-button:hover,
@@ -633,9 +646,17 @@ textarea:disabled {
   grid-row: 1;
 }
 
+.mobile-move-forward::before {
+  transform: translateY(3px) rotate(45deg);
+}
+
 .mobile-move-left {
   grid-column: 1;
   grid-row: 2;
+}
+
+.mobile-move-left::before {
+  transform: translateX(3px) rotate(-45deg);
 }
 
 .mobile-move-right {
@@ -643,9 +664,17 @@ textarea:disabled {
   grid-row: 2;
 }
 
+.mobile-move-right::before {
+  transform: translateX(-3px) rotate(135deg);
+}
+
 .mobile-move-back {
   grid-column: 2;
   grid-row: 2;
+}
+
+.mobile-move-back::before {
+  transform: translateY(-3px) rotate(225deg);
 }
 
 .log-activity {
